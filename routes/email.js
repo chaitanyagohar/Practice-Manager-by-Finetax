@@ -7,8 +7,9 @@ const { requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
-function getSmtpTransport() {
-  const s = store.findById('settings', 'firm') || {};
+// ADDED ASYNC
+async function getSmtpTransport() {
+  const s = await store.findById('settings', 'firm') || {};
   if (!s.smtpHost || !s.smtpUser || !s.smtpPass) return null;
   return nodemailer.createTransport({
     host: s.smtpHost,
@@ -18,29 +19,22 @@ function getSmtpTransport() {
   });
 }
 
-// ---------------------------------------------------------------------
-// Sending invoices/bills by email (Section 6 of the roadmap).
-// Requires the firm's own SMTP details to be entered in Firm Settings first
-// (Account Settings -> Firm Settings -> Email/SMTP). Until then this
-// returns a clear "not configured" error rather than failing silently.
-// ---------------------------------------------------------------------
 router.post('/send-invoice/:invoiceId', async (req, res) => {
-  const invoice = store.findById('invoices', req.params.invoiceId);
+  const invoice = await store.findById('invoices', req.params.invoiceId);
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
-  const client = store.findById('clients', invoice.clientId);
+  
+  const client = await store.findById('clients', invoice.clientId);
   const toAddress = req.body.to || (client && client.email);
   if (!toAddress) return res.status(400).json({ error: "No recipient email address — add one to the client record or provide one directly." });
 
-  const transporter = getSmtpTransport();
+  const transporter = await getSmtpTransport();
   if (!transporter) {
     return res.status(400).json({
       error: 'Email sending is not set up yet. Add your SMTP host, username and password in Firm Settings first.',
     });
   }
 
-  const settings = store.findById('settings', 'firm') || {};
-
-  // Build the PDF in-memory by reusing the same rendering the /pdf route uses.
+  const settings = await store.findById('settings', 'firm') || {};
   const buildInvoicePdf = require('./invoices').buildInvoicePdfBuffer;
   let pdfBuffer;
   try {
@@ -75,7 +69,7 @@ function formatAmountPlain(n) {
 }
 
 router.post('/test-smtp', requireRole('admin'), async (req, res) => {
-  const transporter = getSmtpTransport();
+  const transporter = await getSmtpTransport();
   if (!transporter) return res.status(400).json({ error: 'Enter and save SMTP host, username and password first.' });
   try {
     await transporter.verify();
@@ -85,20 +79,12 @@ router.post('/test-smtp', requireRole('admin'), async (req, res) => {
   }
 });
 
-// ---------------------------------------------------------------------
-// Reading client emails from the firm's inbox (Section 2 of the roadmap).
-// Requires IMAP details in Firm Settings. Matches purely by the sender's
-// address against each client's stored email — a client only ever sees
-// mail that was sent from the address on their own record, and only staff
-// logged into this system can reach this endpoint at all (requireAuth is
-// applied where this router is mounted in server.js).
-// ---------------------------------------------------------------------
 router.get('/inbox/:clientId', async (req, res) => {
-  const client = store.findById('clients', req.params.clientId);
+  const client = await store.findById('clients', req.params.clientId);
   if (!client) return res.status(404).json({ error: 'Client not found' });
   if (!client.email) return res.status(400).json({ error: 'This client has no email address on file, so there is nothing to match against.' });
 
-  const s = store.findById('settings', 'firm') || {};
+  const s = await store.findById('settings', 'firm') || {};
   if (!s.imapHost || !s.imapUser || !s.imapPass) {
     return res.status(400).json({
       error: 'Email inbox is not set up yet. Add your IMAP host, username and password in Firm Settings first.',

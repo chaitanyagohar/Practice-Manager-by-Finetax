@@ -1,17 +1,14 @@
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
 const { v4: uuid } = require('uuid');
 const PDFDocument = require('pdfkit');
 const store = require('../db/store');
 
 const router = express.Router();
-const LOGO_DIR = path.join(__dirname, '..', 'uploads', 'firm');
 
 async function nextInvoiceNumber() {
-  const settings = store.findById('settings', 'firm') || { invoicePrefix: 'INV' };
+  const settings = await store.findById('settings', 'firm') || { invoicePrefix: 'INV' };
   const year = new Date().getFullYear();
-  const counters = store.readAll('counters');
+  const counters = await store.readAll('counters');
   let counter = counters.find((c) => c.id === 'invoice');
   if (!counter) {
     counter = { id: 'invoice', prefix: settings.invoicePrefix, year, seq: 0 };
@@ -42,9 +39,9 @@ function computeTotals(items, isInterState, gstRate) {
   return { subtotal: +subtotal.toFixed(2), cgst, sgst, igst, total };
 }
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const { clientId, status, search } = req.query;
-  let invoices = store.readAll('invoices');
+  let invoices = await store.readAll('invoices');
   if (clientId) invoices = invoices.filter((i) => i.clientId === clientId);
   if (status) invoices = invoices.filter((i) => i.status === status);
   if (search) {
@@ -57,8 +54,8 @@ router.get('/', (req, res) => {
   res.json(invoices);
 });
 
-router.get('/:id', (req, res) => {
-  const invoice = store.findById('invoices', req.params.id);
+router.get('/:id', async (req, res) => {
+  const invoice = await store.findById('invoices', req.params.id);
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
   res.json(invoice);
 });
@@ -68,7 +65,7 @@ router.post('/', async (req, res) => {
   if (!clientId || !items || !items.length) {
     return res.status(400).json({ error: 'Client and at least one line item are required' });
   }
-  const client = store.findById('clients', clientId);
+  const client = await store.findById('clients', clientId);
   if (!client) return res.status(400).json({ error: 'Client not found' });
 
   const totals = computeTotals(items, !!isInterState, gstRate);
@@ -81,7 +78,7 @@ router.post('/', async (req, res) => {
     clientName: client.name,
     organisation: organisation || '',
     date: date || new Date().toISOString().slice(0, 10),
-    dueDate: dueDate || '',
+    dueDate: dueDate || null,
     items,
     isInterState: !!isInterState,
     gstRate: Number(gstRate || 0),
@@ -90,19 +87,19 @@ router.post('/', async (req, res) => {
     status: 'Draft',
     notes: notes || '',
     sentLog: [],
-    createdAt: new Date().toISOString(),
-    createdBy: req.session.name || 'Unknown',
   });
   res.json(invoice);
 });
 
 router.put('/:id', async (req, res) => {
-  const existing = store.findById('invoices', req.params.id);
+  const existing = await store.findById('invoices', req.params.id);
   if (!existing) return res.status(404).json({ error: 'Invoice not found' });
 
   const patch = {};
   const allowed = ['date', 'dueDate', 'items', 'isInterState', 'gstRate', 'notes', 'status', 'amountPaid', 'organisation'];
   allowed.forEach((k) => { if (req.body[k] !== undefined) patch[k] = req.body[k]; });
+  
+  if (patch.dueDate === '') patch.dueDate = null;
 
   if (patch.items || patch.isInterState !== undefined || patch.gstRate !== undefined) {
     const items = patch.items || existing.items;
@@ -126,11 +123,9 @@ router.delete('/:id', async (req, res) => {
   res.json({ ok });
 });
 
-// Builds the invoice PDF into an in-memory Buffer, so it can either be
-// streamed straight to an HTTP response (the /pdf route below) or attached
-// to an outgoing email (routes/email.js) without generating the file twice.
-function buildInvoicePdfBuffer(invoice, client, settings) {
-  return new Promise((resolve, reject) => {
+// Changed to async to fetch logo from Supabase URL
+async function buildInvoicePdfBuffer(invoice, client, settings) {
+  return new Promise(async (resolve, reject) => {
     const doc = new PDFDocument({ margin: 0, size: 'A4' });
     const chunks = [];
     doc.on('data', (c) => chunks.push(c));
@@ -141,15 +136,23 @@ function buildInvoicePdfBuffer(invoice, client, settings) {
     const pageW = doc.page.width;
     const marginX = 50;
 
-    // ---- Header band ----
     doc.rect(0, 0, pageW, 110).fill(navy);
     let logoDrawn = false;
+    
+    // Fetch Logo from Supabase Public URL
     if (settings.firmLogoFile) {
-      const logoPath = path.join(LOGO_DIR, settings.firmLogoFile);
-      if (fs.existsSync(logoPath)) {
-        try { doc.image(logoPath, marginX, 24, { fit: [62, 62] }); logoDrawn = true; } catch (e) { /* fall through to text-only header */ }
+      try {
+        const { data } = store.supabase.storage.from('logos').getPublicUrl(settings.firmLogoFile);
+        const res = await fetch(data.publicUrl);
+        const arrayBuffer = await res.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        doc.image(buffer, marginX, 24, { fit: [62, 62] }); 
+        logoDrawn = true; 
+      } catch (e) { 
+        console.error("Failed to load logo for PDF", e);
       }
     }
+    
     const textX = logoDrawn ? marginX + 74 : marginX;
     doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(18).text(settings.firmName || 'Practice', textX, 30);
     doc.font('Helvetica').fontSize(9).fillColor('#cbd5e1');
@@ -164,7 +167,6 @@ function buildInvoicePdfBuffer(invoice, client, settings) {
       .text(`Date: ${invoice.date}`, pageW - marginX - 200, 72, { width: 200, align: 'right' });
     if (invoice.dueDate) doc.text(`Due: ${invoice.dueDate}`, pageW - marginX - 200, 86, { width: 200, align: 'right' });
 
-    // ---- Bill To card ----
     let y = 140;
     doc.roundedRect(marginX, y, pageW - marginX * 2, 88, 4).fillAndStroke('#f6f7fa', border);
     doc.fillColor(muted).font('Helvetica-Bold').fontSize(9).text('BILL TO', marginX + 16, y + 14);
@@ -178,7 +180,6 @@ function buildInvoicePdfBuffer(invoice, client, settings) {
     if (client?.gstin) { doc.text(`GSTIN: ${client.gstin}`, rightColX, rightY); rightY += 14; }
     if (client?.pan) { doc.text(`PAN: ${client.pan}`, rightColX, rightY); rightY += 14; }
 
-    // ---- Line items table ----
     y += 108;
     const col = { desc: marginX, qty: pageW - marginX - 230, rate: pageW - marginX - 165, amount: pageW - marginX - 85 };
     doc.rect(marginX, y, pageW - marginX * 2, 24).fill(navy);
@@ -202,7 +203,6 @@ function buildInvoicePdfBuffer(invoice, client, settings) {
     });
     doc.moveTo(marginX, y).lineTo(pageW - marginX, y).strokeColor(border).stroke();
 
-    // ---- Totals box ----
     y += 14;
     const totalsX = pageW - marginX - 220;
     const totalsRow = (label, value, opts = {}) => {
@@ -211,18 +211,23 @@ function buildInvoicePdfBuffer(invoice, client, settings) {
       doc.text(value, totalsX + 130, y, { width: 90, align: 'right' });
       y += opts.bold ? 20 : 16;
     };
-    totalsRow('Subtotal', invoice.subtotal.toFixed(2));
-    if (invoice.igst > 0) totalsRow('IGST', invoice.igst.toFixed(2));
-    else { totalsRow('CGST', invoice.cgst.toFixed(2)); totalsRow('SGST', invoice.sgst.toFixed(2)); }
+    
+    // Parse floats properly just in case Postgres returns strings
+    const sub = parseFloat(invoice.subtotal);
+    const tot = parseFloat(invoice.total);
+    const pd = parseFloat(invoice.amountPaid);
+    
+    totalsRow('Subtotal', sub.toFixed(2));
+    if (parseFloat(invoice.igst) > 0) totalsRow('IGST', parseFloat(invoice.igst).toFixed(2));
+    else { totalsRow('CGST', parseFloat(invoice.cgst).toFixed(2)); totalsRow('SGST', parseFloat(invoice.sgst).toFixed(2)); }
     doc.moveTo(totalsX, y).lineTo(pageW - marginX, y).strokeColor(border).stroke();
     y += 6;
-    totalsRow('Total Due', `Rs. ${invoice.total.toFixed(2)}`, { bold: true });
-    if (invoice.amountPaid > 0) {
-      totalsRow('Amount Paid', invoice.amountPaid.toFixed(2));
-      totalsRow('Balance', `Rs. ${Math.max(0, invoice.total - invoice.amountPaid).toFixed(2)}`, { bold: true });
+    totalsRow('Total Due', `Rs. ${tot.toFixed(2)}`, { bold: true });
+    if (pd > 0) {
+      totalsRow('Amount Paid', pd.toFixed(2));
+      totalsRow('Balance', `Rs. ${Math.max(0, tot - pd).toFixed(2)}`, { bold: true });
     }
 
-    // ---- Notes + footer ----
     if (invoice.notes) {
       doc.font('Helvetica-Bold').fontSize(9).fillColor(muted).text('NOTES', marginX, y + 20);
       doc.font('Helvetica').fontSize(9.5).fillColor('#374151').text(invoice.notes, marginX, y + 34, { width: pageW - marginX * 2 });
@@ -238,12 +243,11 @@ function buildInvoicePdfBuffer(invoice, client, settings) {
   });
 }
 
-// Streams the same PDF straight to the browser for viewing/downloading.
 router.get('/:id/pdf', async (req, res) => {
-  const invoice = store.findById('invoices', req.params.id);
+  const invoice = await store.findById('invoices', req.params.id);
   if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
-  const client = store.findById('clients', invoice.clientId) || {};
-  const settings = store.findById('settings', 'firm') || {};
+  const client = await store.findById('clients', invoice.clientId) || {};
+  const settings = await store.findById('settings', 'firm') || {};
 
   try {
     const buffer = await buildInvoicePdfBuffer(invoice, client, settings);

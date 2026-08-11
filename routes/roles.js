@@ -1,55 +1,133 @@
 const express = require('express');
 const { v4: uuid } = require('uuid');
 const store = require('../db/store');
-const { requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
-// The fixed set of permissions a custom role can be granted. Kept here (not
-// hard-coded per-route) so the admin UI can render a checklist and stay in
-// sync with what requirePermission() actually checks.
-const AVAILABLE_PERMISSIONS = [
-  { key: 'discussions.manage', label: 'Manage Client Discussions' },
-  { key: 'time.manage', label: 'Manage Time Tracking Entries' },
-  { key: 'time.viewAll', label: 'View Time Entries for All Staff (not just their own)' },
-  { key: 'roles.manage', label: 'Manage Custom Roles (admin-level)' },
+const CATEGORIES = [
+  'GST Return', 'TDS Return', 'Income Tax Return', 'Tax Audit', 'Statutory Audit',
+  'ROC/MCA Filing', 'Advance Tax', 'Bookkeeping', 'Assessment/Notice', 'Other',
 ];
 
-router.get('/meta/permissions', (req, res) => res.json(AVAILABLE_PERMISSIONS));
+const RECURRENCE_OPTIONS = ['None', 'Weekly', 'Monthly', 'Quarterly', 'Yearly'];
 
-router.get('/', (req, res) => {
-  res.json(store.readAll('roles'));
-});
-
-router.post('/', requireRole('admin'), async (req, res) => {
-  const { name, permissions } = req.body;
-  if (!name) return res.status(400).json({ error: 'Role name is required' });
-  const valid = (permissions || []).filter((p) => AVAILABLE_PERMISSIONS.some((ap) => ap.key === p));
-  const role = await store.insert('roles', {
-    id: uuid(), name, permissions: valid, createdAt: new Date().toISOString(),
-  });
-  res.json(role);
-});
-
-router.put('/:id', requireRole('admin'), async (req, res) => {
-  const { name, permissions } = req.body;
-  const patch = {};
-  if (name !== undefined) patch.name = name;
-  if (permissions !== undefined) patch.permissions = permissions.filter((p) => AVAILABLE_PERMISSIONS.some((ap) => ap.key === p));
-  const updated = await store.update('roles', req.params.id, patch);
-  if (!updated) return res.status(404).json({ error: 'Role not found' });
-  res.json(updated);
-});
-
-router.delete('/:id', requireRole('admin'), async (req, res) => {
-  // Un-assign this role from anyone using it before deleting it, so no user
-  // is left pointing at a role that no longer exists.
-  const users = store.readAll('users').filter((u) => u.customRoleId === req.params.id);
-  for (const u of users) {
-    await store.update('users', u.id, { customRoleId: '' });
+function withComputedStatus(task) {
+  if (task.status === 'Completed') return task;
+  const today = new Date().toISOString().slice(0, 10);
+  if (task.dueDate && task.dueDate < today) {
+    return { ...task, status: 'Overdue' };
   }
-  const ok = await store.remove('roles', req.params.id);
-  res.json({ ok, unassignedFrom: users.length });
+  return task;
+}
+
+function nextDueDate(dueDate, recurrence) {
+  const d = new Date(dueDate + 'T00:00:00');
+  if (recurrence === 'Weekly') d.setDate(d.getDate() + 7);
+  else if (recurrence === 'Monthly') d.setMonth(d.getMonth() + 1);
+  else if (recurrence === 'Quarterly') d.setMonth(d.getMonth() + 3);
+  else if (recurrence === 'Yearly') d.setFullYear(d.getFullYear() + 1);
+  else return null;
+  return d.toISOString().slice(0, 10);
+}
+
+router.get('/meta/categories', (req, res) => res.json(CATEGORIES));
+router.get('/meta/recurrence-options', (req, res) => res.json(RECURRENCE_OPTIONS));
+
+router.get('/', async (req, res) => {
+  const { clientId, assignedTo, status, category, from, to, search, seriesId } = req.query;
+  const rawTasks = await store.readAll('tasks');
+  let tasks = rawTasks.map(withComputedStatus);
+  
+  if (clientId) tasks = tasks.filter((t) => t.clientId === clientId);
+  if (assignedTo) tasks = tasks.filter((t) => t.assignedTo === assignedTo);
+  if (status) tasks = tasks.filter((t) => t.status === status);
+  if (category) tasks = tasks.filter((t) => t.category === category);
+  if (from) tasks = tasks.filter((t) => t.dueDate >= from);
+  if (to) tasks = tasks.filter((t) => t.dueDate <= to);
+  if (seriesId) tasks = tasks.filter((t) => t.seriesId === seriesId);
+  if (search) {
+    const s = search.toLowerCase();
+    tasks = tasks.filter((t) =>
+      [t.title, t.notes, t.category].filter(Boolean).some((f) => f.toLowerCase().includes(s))
+    );
+  }
+  tasks.sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
+  res.json(tasks);
+});
+
+router.get('/:id', async (req, res) => {
+  const task = await store.findById('tasks', req.params.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  res.json(withComputedStatus(task));
+});
+
+router.post('/', async (req, res) => {
+  const { title, clientId, category, dueDate, assignedTo, priority, notes, recurrence } = req.body;
+  if (!title || !dueDate) return res.status(400).json({ error: 'Title and due date are required' });
+  const rec = RECURRENCE_OPTIONS.includes(recurrence) ? recurrence : 'None';
+  const id = uuid();
+  const task = await store.insert('tasks', {
+    id,
+    title,
+    clientId: clientId || null,
+    category: category || 'Other',
+    dueDate,
+    assignedTo: assignedTo || '',
+    priority: priority || 'Medium',
+    status: 'Pending',
+    notes: notes || '',
+    recurrence: rec,
+    seriesId: id
+  });
+  res.json(task);
+});
+
+router.put('/:id', async (req, res) => {
+  const allowed = ['title', 'clientId', 'category', 'dueDate', 'assignedTo', 'priority', 'status', 'notes', 'recurrence'];
+  const patch = {};
+  allowed.forEach((k) => { if (req.body[k] !== undefined) patch[k] = req.body[k]; });
+  if (patch.recurrence && !RECURRENCE_OPTIONS.includes(patch.recurrence)) delete patch.recurrence;
+  if (patch.clientId === '') patch.clientId = null; 
+
+  const existing = await store.findById('tasks', req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Task not found' });
+
+  const wasCompleting = patch.status === 'Completed' && existing.status !== 'Completed';
+  const updated = await store.update('tasks', req.params.id, patch);
+
+  let nextTask = null;
+  if (wasCompleting && existing.recurrence && existing.recurrence !== 'None') {
+    const seriesId = existing.seriesId || existing.id;
+    const allTasks = await store.readAll('tasks');
+    const siblings = allTasks.filter((t) => t.seriesId === seriesId);
+    const alreadyHasFuture = siblings.some((t) => t.id !== existing.id && t.dueDate > existing.dueDate);
+    
+    if (!alreadyHasFuture) {
+      const newDue = nextDueDate(existing.dueDate, existing.recurrence);
+      if (newDue) {
+        nextTask = await store.insert('tasks', {
+          id: uuid(),
+          title: existing.title,
+          clientId: existing.clientId || null,
+          category: existing.category,
+          dueDate: newDue,
+          assignedTo: existing.assignedTo,
+          priority: existing.priority,
+          status: 'Pending',
+          notes: existing.notes,
+          recurrence: existing.recurrence,
+          seriesId
+        });
+      }
+    }
+  }
+
+  res.json({ ...updated, nextOccurrence: nextTask });
+});
+
+router.delete('/:id', async (req, res) => {
+  const ok = await store.remove('tasks', req.params.id);
+  res.json({ ok });
 });
 
 module.exports = router;

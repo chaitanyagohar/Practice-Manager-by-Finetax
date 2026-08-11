@@ -5,29 +5,35 @@ const { userHasPermission } = require('../middleware/auth');
 
 const router = express.Router();
 
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   const { clientId, taskId, staff, from, to } = req.query;
-  let entries = store.readAll('timeEntries');
-  // Staff without the "view all" permission only ever see their own entries.
-  if (req.session.role !== 'admin' && !userHasPermission(req.session, 'time.viewAll')) {
+  
+  let entries = await store.readAll('time');
+  
+  // Await the permission check since it talks to the DB
+  const hasViewAll = await userHasPermission(req.session, 'time.viewAll');
+  if (req.session.role !== 'admin' && !hasViewAll) {
     entries = entries.filter((e) => e.staff === req.session.name);
   }
+  
   if (clientId) entries = entries.filter((e) => e.clientId === clientId);
   if (taskId) entries = entries.filter((e) => e.taskId === taskId);
   if (staff) entries = entries.filter((e) => e.staff === staff);
   if (from) entries = entries.filter((e) => e.date >= from);
   if (to) entries = entries.filter((e) => e.date <= to);
+  
   entries.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   res.json(entries);
 });
 
-// Summary totals grouped by client / task / staff — for review screens.
-// Restricted to admins or staff explicitly granted "view all" permission.
-router.get('/summary', (req, res) => {
-  if (req.session.role !== 'admin' && !userHasPermission(req.session, 'time.viewAll')) {
+router.get('/summary', async (req, res) => {
+  const hasViewAll = await userHasPermission(req.session, 'time.viewAll');
+  if (req.session.role !== 'admin' && !hasViewAll) {
     return res.status(403).json({ error: 'Not authorized to view firm-wide time totals' });
   }
-  const entries = store.readAll('timeEntries');
+  
+  const entries = await store.readAll('time');
+  
   const by = (key) => {
     const totals = {};
     entries.forEach((e) => {
@@ -44,33 +50,34 @@ router.post('/', async (req, res) => {
   if (!date || !minutes || Number(minutes) <= 0) {
     return res.status(400).json({ error: 'Date and a positive duration (minutes) are required' });
   }
-  const entry = await store.insert('timeEntries', {
+  const entry = await store.insert('time', {
     id: uuid(),
-    clientId: clientId || '',
-    taskId: taskId || '',
-    discussionId: discussionId || '',
+    clientId: clientId || null,
+    taskId: taskId || null,
     staff: staff || req.session.name || 'Unknown',
     date,
     minutes: Number(minutes),
-    notes: notes || '',
-    createdAt: new Date().toISOString(),
-    createdBy: req.session.name || 'Unknown',
+    notes: notes || ''
   });
   res.json(entry);
 });
 
 router.put('/:id', async (req, res) => {
-  const allowed = ['clientId', 'taskId', 'discussionId', 'staff', 'date', 'minutes', 'notes'];
+  const allowed = ['clientId', 'taskId', 'staff', 'date', 'minutes', 'notes'];
   const patch = {};
   allowed.forEach((k) => { if (req.body[k] !== undefined) patch[k] = req.body[k]; });
+  
   if (patch.minutes !== undefined) patch.minutes = Number(patch.minutes);
-  const updated = await store.update('timeEntries', req.params.id, patch);
+  if (patch.clientId === '') patch.clientId = null;
+  if (patch.taskId === '') patch.taskId = null;
+  
+  const updated = await store.update('time', req.params.id, patch);
   if (!updated) return res.status(404).json({ error: 'Time entry not found' });
   res.json(updated);
 });
 
 router.delete('/:id', async (req, res) => {
-  const ok = await store.remove('timeEntries', req.params.id);
+  const ok = await store.remove('time', req.params.id);
   res.json({ ok });
 });
 
