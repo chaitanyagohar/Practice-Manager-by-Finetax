@@ -3,22 +3,25 @@
 // Each "collection" is a JSON array stored in /data/<name>.json.
 // Writes are queued per-collection to avoid corruption when multiple
 // LAN users hit the server at once.
-// Lightweight JSON-file data store.
-
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-// Bulletproof check for Vercel / Production environments
-const isVercel = process.env.VERCEL || process.env.NODE_ENV === 'production';
+let DATA_DIR = path.join(__dirname, '..', 'data');
 
-const DATA_DIR = isVercel 
-  ? path.join(os.tmpdir(), 'data') 
-  : path.join(__dirname, '..', 'data');
-
-// Create the directory if it doesn't exist
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+try {
+  // Try to create the local folder first
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+} catch (error) {
+  // If Vercel blocks it (read-only filesystem), catch the error and use /tmp
+  console.log('Local folder creation failed, falling back to /tmp/data');
+  DATA_DIR = path.join(os.tmpdir(), 'data');
+  
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
 }
 
 const writeQueues = {};
