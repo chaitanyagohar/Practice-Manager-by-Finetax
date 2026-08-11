@@ -79,5 +79,8 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
+// Close the outer non-production block
+}
+
 // CRITICAL FOR VERCEL: Export the app
 module.exports = app;
