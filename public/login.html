@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Login - Practice Manager</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="login-wrap">
+  <div class="login-card">
+    <h1>Practice Manager</h1>
+    <p class="sub">Sign in to your firm's local workspace</p>
+    <form id="loginForm">
+      <div class="form-row">
+        <label>Username</label>
+        <input type="text" id="username" autocomplete="username" required>
+      </div>
+      <div class="form-row">
+        <label>Password</label>
+        <input type="password" id="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn" style="width:100%; justify-content:center;" type="submit">Sign In</button>
+      <div class="error-msg" id="errorMsg"></div>
+    </form>
+  </div>
+</div>
+<script>
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const errorMsg = document.getElementById('errorMsg');
+  errorMsg.textContent = '';
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Login failed');
+    window.location.href = '/dashboard.html';
+  } catch (err) {
+    errorMsg.textContent = err.message;
+  }
+});
+</script>
+</body>
+</html>

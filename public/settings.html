@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Settings - Practice Manager</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main">
+    <div class="topbar"><h1 id="pageTitle">Firm Settings</h1></div>
+    <div class="content">
+      <div class="card" style="max-width:560px;">
+        <h2 class="mt-0" style="font-size:15px;">Firm Details (appear on invoice PDFs)</h2>
+        <form id="settingsForm">
+          <div class="form-row"><label>Firm Name</label><input id="f_name"></div>
+          <div class="form-row"><label>Address</label><textarea id="f_address" rows="2"></textarea></div>
+          <div class="form-grid">
+            <div class="form-row"><label>PAN</label><input id="f_pan"></div>
+            <div class="form-row"><label>GSTIN</label><input id="f_gstin"></div>
+            <div class="form-row"><label>Email</label><input id="f_email" type="email"></div>
+            <div class="form-row"><label>Phone</label><input id="f_phone"></div>
+            <div class="form-row"><label>Invoice Number Prefix</label><input id="f_prefix"></div>
+            <div class="form-row"><label>Default GST Rate %</label><input id="f_rate" type="number" step="0.01"></div>
+          </div>
+          <button class="btn" type="submit">Save Settings</button>
+          <span class="error-msg" id="savedMsg" style="color:var(--success);"></span>
+        </form>
+      </div>
+
+      <div class="card" style="max-width:560px;">
+        <h2 class="mt-0" style="font-size:15px;">Firm Logo (appears on invoice PDFs)</h2>
+        <div style="display:flex; align-items:center; gap:16px; margin-bottom:14px;">
+          <img id="logoPreview" src="" alt="" style="width:64px; height:64px; object-fit:contain; border:1px solid var(--border); border-radius:6px; display:none; background:#fff;">
+          <span class="muted" id="noLogoMsg" style="font-size:13px;">No logo uploaded yet.</span>
+        </div>
+        <form id="logoForm">
+          <div class="form-row"><label>Upload PNG or JPG (max 2MB)</label><input id="f_logo" type="file" accept="image/png,image/jpeg"></div>
+          <button class="btn secondary" type="submit">Upload Logo</button>
+          <span class="error-msg" id="logoMsg"></span>
+        </form>
+      </div>
+
+      <div class="card" style="max-width:560px;">
+        <h2 class="mt-0" style="font-size:15px;">Sending Invoices by Email (SMTP)</h2>
+        <p class="muted" style="margin-top:-10px; font-size:12.5px;">
+          Enter your firm's outgoing mail server details so the "Send" button on invoices can email them directly
+          to clients. For Gmail/Google Workspace, use an <a href="https://support.google.com/accounts/answer/185833" target="_blank">App Password</a>,
+          not your regular login password.
+        </p>
+        <form id="smtpForm">
+          <div class="form-grid">
+            <div class="form-row"><label>SMTP Host</label><input id="s_host" placeholder="smtp.gmail.com"></div>
+            <div class="form-row"><label>SMTP Port</label><input id="s_port" type="number" placeholder="587"></div>
+            <div class="form-row"><label>Username</label><input id="s_user" placeholder="you@yourfirm.com"></div>
+            <div class="form-row"><label>Password / App Password</label><input id="s_pass" type="password"></div>
+            <div class="form-row"><label>From Name</label><input id="s_fromname" placeholder="Your Firm Name"></div>
+            <div class="form-row"><label>Connection</label>
+              <select id="s_secure"><option value="false">STARTTLS (port 587, most common)</option><option value="true">SSL/TLS (port 465)</option></select>
+            </div>
+          </div>
+          <button class="btn secondary" type="submit">Save Email (SMTP) Settings</button>
+          <button class="btn secondary" type="button" id="testSmtpBtn">Test Connection</button>
+          <span class="error-msg" id="smtpMsg"></span>
+        </form>
+      </div>
+
+      <div class="card" style="max-width:560px;">
+        <h2 class="mt-0" style="font-size:15px;">Client Email Inbox (IMAP)</h2>
+        <p class="muted" style="margin-top:-10px; font-size:12.5px;">
+          Enter your firm's incoming mail server details so client emails can be viewed inside the system,
+          matched automatically by the sender's address against each client's email on file.
+        </p>
+        <form id="imapForm">
+          <div class="form-grid">
+            <div class="form-row"><label>IMAP Host</label><input id="i_host" placeholder="imap.gmail.com"></div>
+            <div class="form-row"><label>IMAP Port</label><input id="i_port" type="number" placeholder="993"></div>
+            <div class="form-row"><label>Username</label><input id="i_user" placeholder="you@yourfirm.com"></div>
+            <div class="form-row"><label>Password / App Password</label><input id="i_pass" type="password"></div>
+          </div>
+          <button class="btn secondary" type="submit">Save Email (IMAP) Settings</button>
+          <span class="error-msg" id="imapMsg"></span>
+        </form>
+      </div>
+
+      <div class="card" style="max-width:560px;">
+        <h2 class="mt-0" style="font-size:15px;">Change My Password</h2>
+        <form id="pwForm">
+          <div class="form-row"><label>Current Password</label><input id="cur_pw" type="password" required></div>
+          <div class="form-row"><label>New Password</label><input id="new_pw" type="password" required></div>
+          <button class="btn secondary" type="submit">Update Password</button>
+          <div class="error-msg" id="pwMsg"></div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/js/common.js"></script>
+<script>
+(async () => {
+  const me = await renderShell('/settings.html', 'Firm Settings');
+  if (me.role !== 'admin') { document.querySelector('.content').innerHTML = '<p class="muted">Admin access required.</p>'; return; }
+
+  const s = await api('/dashboard/settings');
+  document.getElementById('f_name').value = s.firmName || '';
+  document.getElementById('f_address').value = s.firmAddress || '';
+  document.getElementById('f_pan').value = s.firmPAN || '';
+  document.getElementById('f_gstin').value = s.firmGSTIN || '';
+  document.getElementById('f_email').value = s.firmEmail || '';
+  document.getElementById('f_phone').value = s.firmPhone || '';
+  document.getElementById('f_prefix').value = s.invoicePrefix || 'INV';
+  document.getElementById('f_rate').value = s.defaultGSTRate ?? 18;
+
+  if (s.firmLogoFile) {
+    document.getElementById('logoPreview').src = '/api/dashboard/settings/logo?t=' + Date.now();
+    document.getElementById('logoPreview').style.display = 'block';
+    document.getElementById('noLogoMsg').style.display = 'none';
+  }
+
+  document.getElementById('s_host').value = s.smtpHost || '';
+  document.getElementById('s_port').value = s.smtpPort || '';
+  document.getElementById('s_user').value = s.smtpUser || '';
+  document.getElementById('s_fromname').value = s.smtpFromName || '';
+  document.getElementById('s_secure').value = s.smtpSecure ? 'true' : 'false';
+
+  document.getElementById('i_host').value = s.imapHost || '';
+  document.getElementById('i_port').value = s.imapPort || '';
+  document.getElementById('i_user').value = s.imapUser || '';
+
+  document.getElementById('settingsForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    await api('/dashboard/settings', { method: 'PUT', body: {
+      firmName: document.getElementById('f_name').value.trim(),
+      firmAddress: document.getElementById('f_address').value.trim(),
+      firmPAN: document.getElementById('f_pan').value.trim(),
+      firmGSTIN: document.getElementById('f_gstin').value.trim(),
+      firmEmail: document.getElementById('f_email').value.trim(),
+      firmPhone: document.getElementById('f_phone').value.trim(),
+      invoicePrefix: document.getElementById('f_prefix').value.trim() || 'INV',
+      defaultGSTRate: Number(document.getElementById('f_rate').value || 0),
+    }});
+    const msg = document.getElementById('savedMsg');
+    msg.textContent = 'Saved.';
+    setTimeout(() => msg.textContent = '', 2000);
+  });
+
+  document.getElementById('logoForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fileInput = document.getElementById('f_logo');
+    const logoMsg = document.getElementById('logoMsg');
+    if (!fileInput.files.length) { logoMsg.textContent = 'Choose a file first.'; return; }
+    const fd = new FormData();
+    fd.append('logo', fileInput.files[0]);
+    try {
+      await api('/dashboard/settings/logo', { method: 'POST', body: fd });
+      document.getElementById('logoPreview').src = '/api/dashboard/settings/logo?t=' + Date.now();
+      document.getElementById('logoPreview').style.display = 'block';
+      document.getElementById('noLogoMsg').style.display = 'none';
+      logoMsg.style.color = 'var(--success)';
+      logoMsg.textContent = 'Logo updated.';
+    } catch (err) {
+      logoMsg.style.color = 'var(--danger)';
+      logoMsg.textContent = err.message;
+    }
+  });
+
+  document.getElementById('smtpForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const smtpMsg = document.getElementById('smtpMsg');
+    try {
+      await api('/dashboard/settings', { method: 'PUT', body: {
+        smtpHost: document.getElementById('s_host').value.trim(),
+        smtpPort: document.getElementById('s_port').value.trim(),
+        smtpUser: document.getElementById('s_user').value.trim(),
+        smtpPass: document.getElementById('s_pass').value || undefined,
+        smtpFromName: document.getElementById('s_fromname').value.trim(),
+        smtpSecure: document.getElementById('s_secure').value === 'true',
+      }});
+      smtpMsg.style.color = 'var(--success)';
+      smtpMsg.textContent = 'Saved.';
+      document.getElementById('s_pass').value = '';
+    } catch (err) {
+      smtpMsg.style.color = 'var(--danger)';
+      smtpMsg.textContent = err.message;
+    }
+  });
+
+  document.getElementById('testSmtpBtn').addEventListener('click', async () => {
+    const smtpMsg = document.getElementById('smtpMsg');
+    smtpMsg.textContent = 'Testing...';
+    smtpMsg.style.color = 'var(--muted)';
+    try {
+      await api('/email/test-smtp', { method: 'POST' });
+      smtpMsg.style.color = 'var(--success)';
+      smtpMsg.textContent = 'Connected successfully.';
+    } catch (err) {
+      smtpMsg.style.color = 'var(--danger)';
+      smtpMsg.textContent = err.message;
+    }
+  });
+
+  document.getElementById('imapForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const imapMsg = document.getElementById('imapMsg');
+    try {
+      await api('/dashboard/settings', { method: 'PUT', body: {
+        imapHost: document.getElementById('i_host').value.trim(),
+        imapPort: document.getElementById('i_port').value.trim(),
+        imapUser: document.getElementById('i_user').value.trim(),
+        imapPass: document.getElementById('i_pass').value || undefined,
+        imapTls: true,
+      }});
+      imapMsg.style.color = 'var(--success)';
+      imapMsg.textContent = 'Saved.';
+      document.getElementById('i_pass').value = '';
+    } catch (err) {
+      imapMsg.style.color = 'var(--danger)';
+      imapMsg.textContent = err.message;
+    }
+  });
+
+  document.getElementById('pwForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const pwMsg = document.getElementById('pwMsg');
+    pwMsg.style.color = 'var(--danger)';
+    try {
+      await api('/auth/change-password', { method: 'POST', body: {
+        currentPassword: document.getElementById('cur_pw').value,
+        newPassword: document.getElementById('new_pw').value,
+      }});
+      pwMsg.style.color = 'var(--success)';
+      pwMsg.textContent = 'Password updated.';
+      document.getElementById('pwForm').reset();
+    } catch (err) {
+      pwMsg.textContent = err.message;
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Custom Roles - Practice Manager</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main">
+    <div class="topbar"><h1 id="pageTitle">Custom Roles</h1></div>
+    <div class="content">
+      <div class="card">
+        <p class="muted" style="margin-top:0;">
+          Every user is still either <strong>Admin</strong> (full access) or <strong>Staff</strong> (base access) —
+          that doesn't change. A custom role is an <em>extra</em> set of permissions you can layer on top of a
+          Staff account, for things like letting a senior staff member see everyone's logged time.
+          Assign a custom role to someone from the <a href="/users.html">Team</a> page.
+        </p>
+      </div>
+      <div class="toolbar"><div class="spacer"></div><button class="btn" id="addBtn">+ Add Custom Role</button></div>
+      <div class="card" style="padding:0;">
+        <table>
+          <thead><tr><th>Role Name</th><th>Permissions Granted</th><th></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div class="empty-state" id="emptyState" style="display:none;">No custom roles yet.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <span class="close-x" id="closeModal">&times;</span>
+    <h2 id="modalTitle">Add Custom Role</h2>
+    <form id="itemForm">
+      <input type="hidden" id="itemId">
+      <div class="form-row"><label>Role Name *</label><input id="f_name" required placeholder="e.g. Senior Associate"></div>
+      <div class="form-row">
+        <label>Permissions</label>
+        <div id="permsList"></div>
+      </div>
+      <div class="toolbar">
+        <button type="button" class="btn danger" id="deleteBtn" style="display:none;">Delete</button>
+        <div class="spacer"></div>
+        <button type="button" class="btn secondary" id="cancelBtn">Cancel</button>
+        <button type="submit" class="btn">Save</button>
+      </div>
+      <div class="error-msg" id="formError"></div>
+    </form>
+  </div>
+</div>
+
+<script src="/js/common.js"></script>
+<script>
+let roles = [], permissions = [];
+
+function renderRows() {
+  const rows = document.getElementById('rows');
+  document.getElementById('emptyState').style.display = roles.length ? 'none' : 'block';
+  rows.innerHTML = roles.map((r) => `
+    <tr data-id="${r.id}" style="cursor:pointer;">
+      <td><strong>${escapeHtml(r.name)}</strong></td>
+      <td class="muted">${(r.permissions || []).map((p) => (permissions.find((ap) => ap.key === p) || {}).label || p).join(', ') || '(none selected)'}</td>
+      <td><a class="btn small secondary">Edit</a></td>
+    </tr>
+  `).join('');
+  rows.querySelectorAll('tr').forEach((tr) => tr.addEventListener('click', () => openModal(roles.find((r) => r.id === tr.dataset.id))));
+}
+
+function openModal(role) {
+  document.getElementById('formError').textContent = '';
+  const deleteBtn = document.getElementById('deleteBtn');
+  const permsList = document.getElementById('permsList');
+  permsList.innerHTML = permissions.map((p) => `
+    <label style="font-weight:400; display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+      <input type="checkbox" value="${p.key}" style="width:auto;" ${role && (role.permissions || []).includes(p.key) ? 'checked' : ''}>
+      ${escapeHtml(p.label)}
+    </label>
+  `).join('');
+
+  if (role) {
+    document.getElementById('modalTitle').textContent = 'Edit Custom Role';
+    document.getElementById('itemId').value = role.id;
+    document.getElementById('f_name').value = role.name;
+    deleteBtn.style.display = 'inline-flex';
+  } else {
+    document.getElementById('modalTitle').textContent = 'Add Custom Role';
+    document.getElementById('itemForm').reset();
+    document.getElementById('itemId').value = '';
+    deleteBtn.style.display = 'none';
+  }
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function closeModal() { document.getElementById('modalOverlay').classList.remove('open'); }
+
+(async () => {
+  const me = await renderShell('/roles.html', 'Custom Roles');
+  if (me.role !== 'admin') { document.querySelector('.content').innerHTML = '<p class="muted">Admin access required.</p>'; return; }
+
+  [roles, permissions] = await Promise.all([api('/roles'), api('/roles/meta/permissions')]);
+  renderRows();
+
+  document.getElementById('addBtn').addEventListener('click', () => openModal(null));
+  document.getElementById('closeModal').addEventListener('click', closeModal);
+  document.getElementById('cancelBtn').addEventListener('click', closeModal);
+
+  document.getElementById('itemForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = document.getElementById('itemId').value;
+    const selected = Array.from(document.querySelectorAll('#permsList input:checked')).map((el) => el.value);
+    const payload = { name: document.getElementById('f_name').value.trim(), permissions: selected };
+    try {
+      if (id) await api('/roles/' + id, { method: 'PUT', body: payload });
+      else await api('/roles', { method: 'POST', body: payload });
+      roles = await api('/roles');
+      renderRows();
+      closeModal();
+    } catch (err) {
+      document.getElementById('formError').textContent = err.message;
+    }
+  });
+
+  document.getElementById('deleteBtn').addEventListener('click', async () => {
+    const id = document.getElementById('itemId').value;
+    if (!confirm('Delete this custom role? Anyone currently assigned to it will lose the extra permissions (their base Admin/Staff access is unaffected).')) return;
+    await api('/roles/' + id, { method: 'DELETE' });
+    roles = await api('/roles');
+    renderRows();
+    closeModal();
+  });
+})();
+</script>
+</body>
+</html>

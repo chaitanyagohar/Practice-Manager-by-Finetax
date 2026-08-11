@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Tasks - Practice Manager</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main">
+    <div class="topbar"><h1 id="pageTitle">Tasks &amp; Compliance</h1></div>
+    <div class="content">
+      <div class="toolbar">
+        <input type="text" id="searchBox" placeholder="Search tasks..." style="max-width:200px;">
+        <select id="filterStatus" style="max-width:160px;">
+          <option value="">All statuses</option>
+          <option>Pending</option><option>In Progress</option><option>Overdue</option><option>Completed</option>
+        </select>
+        <select id="filterCategory" style="max-width:200px;"><option value="">All categories</option></select>
+        <select id="filterClient" style="max-width:220px;"><option value="">All clients</option></select>
+        <select id="filterRecurring" style="max-width:160px;">
+          <option value="">One-time &amp; recurring</option>
+          <option value="recurring">Recurring only</option>
+          <option value="onetime">One-time only</option>
+        </select>
+        <div class="spacer"></div>
+        <button class="btn" id="addBtn">+ Add Task</button>
+      </div>
+      <div class="card" style="padding:0;">
+        <table>
+          <thead><tr><th>Due Date</th><th>Task</th><th>Category</th><th>Client</th><th>Assigned To</th><th>Priority</th><th>Recurrence</th><th>Status</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div class="empty-state" id="emptyState" style="display:none;">No tasks match these filters.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <span class="close-x" id="closeModal">&times;</span>
+    <h2 id="modalTitle">Add Task</h2>
+    <form id="taskForm">
+      <input type="hidden" id="taskId">
+      <div class="form-row"><label>Title *</label><input id="f_title" required placeholder="e.g. GSTR-3B filing for July"></div>
+      <div class="form-grid">
+        <div class="form-row"><label>Client</label><select id="f_client"><option value="">(No client / internal)</option></select></div>
+        <div class="form-row"><label>Category</label><select id="f_category"></select></div>
+        <div class="form-row"><label>Due Date *</label><input id="f_due" type="date" required></div>
+        <div class="form-row"><label>Assigned To</label><input id="f_assigned" placeholder="Staff name"></div>
+        <div class="form-row"><label>Priority</label>
+          <select id="f_priority"><option>Low</option><option selected>Medium</option><option>High</option></select>
+        </div>
+        <div class="form-row"><label>Status</label>
+          <select id="f_status"><option>Pending</option><option>In Progress</option><option>Completed</option></select>
+        </div>
+        <div class="form-row"><label>Recurrence</label>
+          <select id="f_recurrence"></select>
+        </div>
+      </div>
+      <div class="hint" id="seriesHint" style="display:none; margin:-8px 0 12px;"></div>
+      <div class="form-row"><label>Notes</label><textarea id="f_notes" rows="2"></textarea></div>
+      <div class="toolbar">
+        <button type="button" class="btn danger" id="deleteBtn" style="display:none;">Delete</button>
+        <div class="spacer"></div>
+        <button type="button" class="btn secondary" id="cancelBtn">Cancel</button>
+        <button type="submit" class="btn">Save Task</button>
+      </div>
+      <div class="error-msg" id="formError"></div>
+    </form>
+  </div>
+</div>
+
+<script src="/js/common.js"></script>
+<script>
+let allTasks = [], clients = [], categories = [], recurrenceOptions = [];
+const clientMap = {};
+
+function renderRows() {
+  const status = document.getElementById('filterStatus').value;
+  const category = document.getElementById('filterCategory').value;
+  const clientId = document.getElementById('filterClient').value;
+  const recurring = document.getElementById('filterRecurring').value;
+  const search = document.getElementById('searchBox').value.trim().toLowerCase();
+  let list = allTasks;
+  if (status) list = list.filter((t) => t.status === status);
+  if (category) list = list.filter((t) => t.category === category);
+  if (clientId) list = list.filter((t) => t.clientId === clientId);
+  if (recurring === 'recurring') list = list.filter((t) => t.recurrence && t.recurrence !== 'None');
+  if (recurring === 'onetime') list = list.filter((t) => !t.recurrence || t.recurrence === 'None');
+  if (search) list = list.filter((t) => [t.title, t.notes, t.category].filter(Boolean).some((f) => f.toLowerCase().includes(search)));
+
+  const rows = document.getElementById('rows');
+  document.getElementById('emptyState').style.display = list.length ? 'none' : 'block';
+  rows.innerHTML = list.map((t) => `
+    <tr data-id="${t.id}" style="cursor:pointer;">
+      <td>${formatDate(t.dueDate)}</td>
+      <td>${escapeHtml(t.title)}</td>
+      <td>${escapeHtml(t.category)}</td>
+      <td>${escapeHtml(clientMap[t.clientId] || '-')}</td>
+      <td>${escapeHtml(t.assignedTo || '-')}</td>
+      <td>${escapeHtml(t.priority)}</td>
+      <td>${t.recurrence && t.recurrence !== 'None' ? `<span class="badge status-InProgress">↻ ${escapeHtml(t.recurrence)}</span>` : '<span class="muted">One-time</span>'}</td>
+      <td>${badge(t.status)}</td>
+    </tr>
+  `).join('');
+  rows.querySelectorAll('tr').forEach((tr) => tr.addEventListener('click', () => openModal(tr.dataset.id)));
+}
+
+function openModal(id) {
+  document.getElementById('formError').textContent = '';
+  const deleteBtn = document.getElementById('deleteBtn');
+  const seriesHint = document.getElementById('seriesHint');
+  if (id) {
+    const t = allTasks.find((x) => x.id === id);
+    document.getElementById('modalTitle').textContent = 'Edit Task';
+    document.getElementById('taskId').value = t.id;
+    document.getElementById('f_title').value = t.title;
+    document.getElementById('f_client').value = t.clientId || '';
+    document.getElementById('f_category').value = t.category;
+    document.getElementById('f_due').value = t.dueDate;
+    document.getElementById('f_assigned').value = t.assignedTo || '';
+    document.getElementById('f_priority').value = t.priority || 'Medium';
+    document.getElementById('f_status').value = t.status === 'Overdue' ? 'Pending' : t.status;
+    document.getElementById('f_notes').value = t.notes || '';
+    document.getElementById('f_recurrence').value = t.recurrence || 'None';
+    deleteBtn.style.display = 'inline-flex';
+    if (t.recurrence && t.recurrence !== 'None') {
+      const seriesCount = allTasks.filter((x) => x.seriesId === (t.seriesId || t.id)).length;
+      seriesHint.style.display = 'block';
+      seriesHint.textContent = `Part of a ${t.recurrence.toLowerCase()} series — ${seriesCount} occurrence(s) so far. Marking this Completed will automatically create the next occurrence.`;
+    } else {
+      seriesHint.style.display = 'none';
+    }
+  } else {
+    document.getElementById('modalTitle').textContent = 'Add Task';
+    document.getElementById('taskForm').reset();
+    document.getElementById('taskId').value = '';
+    document.getElementById('f_recurrence').value = 'None';
+    deleteBtn.style.display = 'none';
+    seriesHint.style.display = 'none';
+  }
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function closeModal() { document.getElementById('modalOverlay').classList.remove('open'); }
+
+(async () => {
+  await renderShell('/tasks.html', 'Tasks & Compliance');
+  [clients, categories, allTasks, recurrenceOptions] = await Promise.all([
+    api('/clients'), api('/tasks/meta/categories'), api('/tasks'), api('/tasks/meta/recurrence-options'),
+  ]);
+  clients.forEach((c) => clientMap[c.id] = c.name);
+
+  const clientOptions = clients.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  document.getElementById('f_client').innerHTML += clientOptions;
+  document.getElementById('filterClient').innerHTML += clientOptions;
+  const catOptions = categories.map((c) => `<option>${c}</option>`).join('');
+  document.getElementById('f_category').innerHTML = catOptions;
+  document.getElementById('filterCategory').innerHTML += catOptions;
+  document.getElementById('f_recurrence').innerHTML = recurrenceOptions.map((r) => `<option>${r}</option>`).join('');
+
+  renderRows();
+  ['filterStatus', 'filterCategory', 'filterClient', 'filterRecurring'].forEach((id) =>
+    document.getElementById(id).addEventListener('change', renderRows)
+  );
+  document.getElementById('searchBox').addEventListener('input', renderRows);
+
+  document.getElementById('addBtn').addEventListener('click', () => openModal(null));
+  document.getElementById('closeModal').addEventListener('click', closeModal);
+  document.getElementById('cancelBtn').addEventListener('click', closeModal);
+
+  document.getElementById('taskForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = document.getElementById('taskId').value;
+    const payload = {
+      title: document.getElementById('f_title').value.trim(),
+      clientId: document.getElementById('f_client').value,
+      category: document.getElementById('f_category').value,
+      dueDate: document.getElementById('f_due').value,
+      assignedTo: document.getElementById('f_assigned').value.trim(),
+      priority: document.getElementById('f_priority').value,
+      status: document.getElementById('f_status').value,
+      notes: document.getElementById('f_notes').value.trim(),
+      recurrence: document.getElementById('f_recurrence').value,
+    };
+    try {
+      let result;
+      if (id) result = await api('/tasks/' + id, { method: 'PUT', body: payload });
+      else result = await api('/tasks', { method: 'POST', body: payload });
+      allTasks = await api('/tasks');
+      renderRows();
+      closeModal();
+      if (result && result.nextOccurrence) {
+        alert(`Next occurrence auto-created: "${result.nextOccurrence.title}" due ${formatDate(result.nextOccurrence.dueDate)}.`);
+      }
+    } catch (err) {
+      document.getElementById('formError').textContent = err.message;
+    }
+  });
+
+  document.getElementById('deleteBtn').addEventListener('click', async () => {
+    const id = document.getElementById('taskId').value;
+    if (!confirm('Delete this task?')) return;
+    await api('/tasks/' + id, { method: 'DELETE' });
+    allTasks = await api('/tasks');
+    renderRows();
+    closeModal();
+  });
+})();
+</script>
+</body>
+</html>

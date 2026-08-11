@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Team - Practice Manager</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main">
+    <div class="topbar"><h1 id="pageTitle">Team</h1></div>
+    <div class="content">
+      <div class="toolbar"><div class="spacer"></div><button class="btn" id="addBtn">+ Add Team Member</button></div>
+      <div class="card" style="padding:0;">
+        <table>
+          <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Email</th><th>Active</th><th>Custom Role</th><th></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <span class="close-x" id="closeModal">&times;</span>
+    <h2 id="modalTitle">Add Team Member</h2>
+    <form id="userForm">
+      <input type="hidden" id="userId">
+      <div class="form-grid">
+        <div class="form-row"><label>Full Name *</label><input id="f_name" required></div>
+        <div class="form-row"><label>Username *</label><input id="f_username" required></div>
+        <div class="form-row"><label>Role</label><select id="f_role"><option value="staff">Staff</option><option value="admin">Admin</option></select></div>
+        <div class="form-row"><label>Email</label><input id="f_email" type="email"></div>
+      </div>
+      <div class="form-row"><label>Custom Role <span class="muted" style="font-weight:400;">(optional — extra permissions on top of Staff/Admin)</span></label>
+        <select id="f_customRole"><option value="">(None)</option></select>
+      </div>
+      <div class="form-row"><label id="pwLabel">Password *</label><input id="f_password" type="password"></div>
+      <div class="form-row" id="activeRow" style="display:none;">
+        <label><input type="checkbox" id="f_active" style="width:auto; display:inline-block; margin-right:6px;">Active</label>
+      </div>
+      <div class="toolbar">
+        <button type="button" class="btn danger" id="deleteBtn" style="display:none;">Delete</button>
+        <div class="spacer"></div>
+        <button type="button" class="btn secondary" id="cancelBtn">Cancel</button>
+        <button type="submit" class="btn">Save</button>
+      </div>
+      <div class="error-msg" id="formError"></div>
+    </form>
+  </div>
+</div>
+
+<script src="/js/common.js"></script>
+<script>
+let allUsers = [], me, customRoles = [];
+const roleMap = {};
+
+function renderRows() {
+  document.getElementById('rows').innerHTML = allUsers.map((u) => `
+    <tr data-id="${u.id}" style="cursor:pointer;">
+      <td>${escapeHtml(u.name)}</td><td>${escapeHtml(u.username)}</td><td>${escapeHtml(u.role)}</td>
+      <td>${escapeHtml(u.email || '-')}</td><td>${u.active ? 'Yes' : 'No'}</td>
+      <td class="muted">${roleMap[u.customRoleId] || '-'}</td>
+      <td><a class="btn small secondary">Edit</a></td>
+    </tr>
+  `).join('');
+  document.querySelectorAll('#rows tr').forEach((tr) => tr.addEventListener('click', () => openModal(tr.dataset.id)));
+}
+
+function openModal(id) {
+  document.getElementById('formError').textContent = '';
+  const deleteBtn = document.getElementById('deleteBtn');
+  if (id) {
+    const u = allUsers.find((x) => x.id === id);
+    document.getElementById('modalTitle').textContent = 'Edit ' + u.name;
+    document.getElementById('userId').value = u.id;
+    document.getElementById('f_name').value = u.name;
+    document.getElementById('f_username').value = u.username;
+    document.getElementById('f_username').disabled = true;
+    document.getElementById('f_role').value = u.role;
+    document.getElementById('f_email').value = u.email || '';
+    document.getElementById('f_customRole').value = u.customRoleId || '';
+    document.getElementById('f_password').value = '';
+    document.getElementById('pwLabel').textContent = 'New Password (leave blank to keep unchanged)';
+    document.getElementById('f_password').required = false;
+    document.getElementById('activeRow').style.display = 'block';
+    document.getElementById('f_active').checked = !!u.active;
+    deleteBtn.style.display = id === me.id ? 'none' : 'inline-flex';
+  } else {
+    document.getElementById('modalTitle').textContent = 'Add Team Member';
+    document.getElementById('userForm').reset();
+    document.getElementById('userId').value = '';
+    document.getElementById('f_username').disabled = false;
+    document.getElementById('pwLabel').textContent = 'Password *';
+    document.getElementById('f_password').required = true;
+    document.getElementById('activeRow').style.display = 'none';
+    deleteBtn.style.display = 'none';
+  }
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function closeModal() { document.getElementById('modalOverlay').classList.remove('open'); }
+
+(async () => {
+  me = await renderShell('/users.html', 'Team');
+  if (me.role !== 'admin') { document.querySelector('.content').innerHTML = '<p class="muted">Admin access required.</p>'; return; }
+  [allUsers, customRoles] = await Promise.all([api('/users'), api('/roles')]);
+  customRoles.forEach((r) => roleMap[r.id] = r.name);
+  document.getElementById('f_customRole').innerHTML += customRoles.map((r) => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join('');
+  renderRows();
+
+  document.getElementById('addBtn').addEventListener('click', () => openModal(null));
+  document.getElementById('closeModal').addEventListener('click', closeModal);
+  document.getElementById('cancelBtn').addEventListener('click', closeModal);
+
+  document.getElementById('userForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = document.getElementById('userId').value;
+    try {
+      if (id) {
+        const payload = {
+          name: document.getElementById('f_name').value.trim(),
+          role: document.getElementById('f_role').value,
+          email: document.getElementById('f_email').value.trim(),
+          active: document.getElementById('f_active').checked,
+          customRoleId: document.getElementById('f_customRole').value,
+        };
+        const pw = document.getElementById('f_password').value;
+        if (pw) payload.password = pw;
+        await api('/users/' + id, { method: 'PUT', body: payload });
+      } else {
+        await api('/users', {
+          method: 'POST',
+          body: {
+            name: document.getElementById('f_name').value.trim(),
+            username: document.getElementById('f_username').value.trim(),
+            password: document.getElementById('f_password').value,
+            role: document.getElementById('f_role').value,
+            email: document.getElementById('f_email').value.trim(),
+            customRoleId: document.getElementById('f_customRole').value,
+          },
+        });
+      }
+      allUsers = await api('/users');
+      renderRows();
+      closeModal();
+    } catch (err) {
+      document.getElementById('formError').textContent = err.message;
+    }
+  });
+
+  document.getElementById('deleteBtn').addEventListener('click', async () => {
+    const id = document.getElementById('userId').value;
+    if (!confirm('Remove this team member?')) return;
+    await api('/users/' + id, { method: 'DELETE' });
+    allUsers = await api('/users');
+    renderRows();
+    closeModal();
+  });
+})();
+</script>
+</body>
+</html>

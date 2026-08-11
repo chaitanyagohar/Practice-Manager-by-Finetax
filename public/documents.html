@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Documents - Practice Manager</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main">
+    <div class="topbar"><h1 id="pageTitle">Documents</h1></div>
+    <div class="content">
+      <div class="toolbar">
+        <select id="filterClient" style="max-width:260px;"><option value="">All clients</option></select>
+        <div class="spacer"></div>
+        <button class="btn" id="uploadBtn">+ Upload Document</button>
+      </div>
+      <div class="card" style="padding:0;">
+        <table>
+          <thead><tr><th>File</th><th>Client</th><th>Category</th><th>Uploaded</th><th>By</th><th>Size</th><th></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div class="empty-state" id="emptyState" style="display:none;">No documents uploaded yet.</div>
+      </div>
+      <p class="muted" style="font-size:12px;">Files are stored locally on this server under a per-client folder inside the <code>uploads</code> directory.</p>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <span class="close-x" id="closeModal">&times;</span>
+    <h2>Upload Document</h2>
+    <form id="uploadForm">
+      <div class="form-row"><label>Client *</label><select id="f_client" required></select></div>
+      <div class="form-row"><label>Category</label>
+        <select id="f_category">
+          <option>General</option><option>PAN/GST Registration</option><option>Financial Statements</option>
+          <option>ITR Acknowledgement</option><option>GST Returns</option><option>TDS Returns</option>
+          <option>Bank Statements</option><option>Invoices/Bills</option><option>Audit Report</option><option>Other</option>
+        </select>
+      </div>
+      <div class="form-row"><label>Description</label><input id="f_desc" placeholder="optional note"></div>
+      <div class="form-row"><label>File *</label><input id="f_file" type="file" required></div>
+      <div class="toolbar">
+        <div class="spacer"></div>
+        <button type="button" class="btn secondary" id="cancelBtn">Cancel</button>
+        <button type="submit" class="btn">Upload</button>
+      </div>
+      <div class="error-msg" id="formError"></div>
+    </form>
+  </div>
+</div>
+
+<script src="/js/common.js"></script>
+<script>
+let clientMap = {};
+
+async function loadDocs() {
+  const clientId = document.getElementById('filterClient').value;
+  const docs = await api('/documents' + (clientId ? '?clientId=' + clientId : ''));
+  const rows = document.getElementById('rows');
+  document.getElementById('emptyState').style.display = docs.length ? 'none' : 'block';
+  rows.innerHTML = docs.map((d) => `
+    <tr>
+      <td>${escapeHtml(d.fileName)}</td>
+      <td>${escapeHtml(clientMap[d.clientId] || '-')}</td>
+      <td>${escapeHtml(d.category)}</td>
+      <td>${new Date(d.uploadedAt).toLocaleDateString('en-IN')}</td>
+      <td>${escapeHtml(d.uploadedBy)}</td>
+      <td>${(d.sizeBytes / 1024).toFixed(0)} KB</td>
+      <td>
+        <a class="btn small secondary" href="/api/documents/${d.id}/download">Download</a>
+        <a class="btn small danger" href="#" data-del="${d.id}">Delete</a>
+      </td>
+    </tr>
+  `).join('');
+  rows.querySelectorAll('[data-del]').forEach((a) => {
+    a.addEventListener('click', async (e) => {
+      e.preventDefault();
+      if (!confirm('Delete this document?')) return;
+      await api('/documents/' + a.dataset.del, { method: 'DELETE' });
+      loadDocs();
+    });
+  });
+}
+
+(async () => {
+  await renderShell('/documents.html', 'Documents');
+  const clients = await api('/clients');
+  clients.forEach((c) => clientMap[c.id] = c.name);
+  const options = clients.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  document.getElementById('filterClient').innerHTML += options;
+  document.getElementById('f_client').innerHTML = options;
+
+  await loadDocs();
+  document.getElementById('filterClient').addEventListener('change', loadDocs);
+
+  const overlay = document.getElementById('modalOverlay');
+  document.getElementById('uploadBtn').addEventListener('click', () => overlay.classList.add('open'));
+  document.getElementById('closeModal').addEventListener('click', () => overlay.classList.remove('open'));
+  document.getElementById('cancelBtn').addEventListener('click', () => overlay.classList.remove('open'));
+
+  document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fileInput = document.getElementById('f_file');
+    if (!fileInput.files.length) return;
+    const fd = new FormData();
+    fd.append('clientId', document.getElementById('f_client').value);
+    fd.append('category', document.getElementById('f_category').value);
+    fd.append('description', document.getElementById('f_desc').value);
+    fd.append('file', fileInput.files[0]);
+    try {
+      await api('/documents', { method: 'POST', body: fd });
+      overlay.classList.remove('open');
+      document.getElementById('uploadForm').reset();
+      loadDocs();
+    } catch (err) {
+      document.getElementById('formError').textContent = err.message;
+    }
+  });
+})();
+</script>
+</body>
+</html>

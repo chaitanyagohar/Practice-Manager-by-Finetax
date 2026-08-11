@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Invoices - Practice Manager</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main">
+    <div class="topbar"><h1 id="pageTitle">Billing / Invoices</h1></div>
+    <div class="content">
+      <div class="toolbar">
+        <select id="filterStatus" style="max-width:180px;">
+          <option value="">All statuses</option>
+          <option>Draft</option><option>Sent</option><option>Partially Paid</option><option>Paid</option>
+        </select>
+        <div class="spacer"></div>
+        <button class="btn" id="addBtn">+ New Invoice</button>
+      </div>
+      <div class="card" style="padding:0;">
+        <table>
+          <thead><tr><th>Invoice #</th><th>Client</th><th>Date</th><th>Total</th><th>Paid</th><th>Status</th><th></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div class="empty-state" id="emptyState" style="display:none;">No invoices yet.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal" style="width:680px;">
+    <span class="close-x" id="closeModal">&times;</span>
+    <h2 id="modalTitle">New Invoice</h2>
+    <form id="invoiceForm">
+      <input type="hidden" id="invoiceId">
+      <div class="form-grid">
+        <div class="form-row"><label>Client *</label><select id="f_client" required></select></div>
+        <div class="form-row"><label>Organisation</label><input id="f_org" placeholder="e.g. Test Client A Pvt Ltd"></div>
+        <div class="form-row"><label>Invoice Date</label><input id="f_date" type="date"></div>
+        <div class="form-row"><label>Due Date</label><input id="f_due" type="date"></div>
+        <div class="form-row"><label>GST Type</label>
+          <select id="f_interstate"><option value="false">Intra-state (CGST+SGST)</option><option value="true">Inter-state (IGST)</option></select>
+        </div>
+        <div class="form-row"><label>GST Rate %</label><input id="f_rate" type="number" step="0.01" value="18"></div>
+        <div class="form-row"><label>Status</label>
+          <select id="f_status"><option>Draft</option><option>Sent</option><option>Partially Paid</option><option>Paid</option></select>
+        </div>
+      </div>
+
+      <label>Line Items</label>
+      <div class="line-items-header"><div>Description</div><div>Qty</div><div>Rate (Rs.)</div><div>Amount</div><div></div></div>
+      <div id="lineItems"></div>
+      <button type="button" class="btn secondary small" id="addLineBtn">+ Add line</button>
+
+      <div class="totals-box" id="totalsBox"></div>
+
+      <div class="form-row" style="margin-top:14px;"><label>Notes</label><textarea id="f_notes" rows="2"></textarea></div>
+      <div class="form-row"><label>Amount Paid (Rs.)</label><input id="f_paid" type="number" step="0.01" value="0"></div>
+
+      <div class="toolbar">
+        <button type="button" class="btn secondary" id="pdfBtn" style="display:none;">View / Print PDF</button>
+        <button type="button" class="btn secondary" id="sendBtn" style="display:none;">Send by Email</button>
+        <button type="button" class="btn danger" id="deleteBtn" style="display:none;">Delete</button>
+        <div class="spacer"></div>
+        <button type="button" class="btn secondary" id="cancelBtn">Cancel</button>
+        <button type="submit" class="btn">Save Invoice</button>
+      </div>
+      <div class="error-msg" id="formError"></div>
+    </form>
+  </div>
+</div>
+
+<script src="/js/common.js"></script>
+<script>
+let allInvoices = [], clients = [], clientMap = {}, lineCounter = 0;
+
+function renderRows() {
+  const status = document.getElementById('filterStatus').value;
+  let list = status ? allInvoices.filter((i) => i.status === status) : allInvoices;
+  const rows = document.getElementById('rows');
+  document.getElementById('emptyState').style.display = list.length ? 'none' : 'block';
+  rows.innerHTML = list.map((i) => `
+    <tr data-id="${i.id}" style="cursor:pointer;">
+      <td>${escapeHtml(i.invoiceNumber)}</td>
+      <td>${escapeHtml(i.clientName)}</td>
+      <td>${formatDate(i.date)}</td>
+      <td>${formatMoney(i.total)}</td>
+      <td>${formatMoney(i.amountPaid)}</td>
+      <td>${badge(i.status)}</td>
+      <td><a class="btn small secondary" href="/api/invoices/${i.id}/pdf" target="_blank" onclick="event.stopPropagation()">PDF</a></td>
+    </tr>
+  `).join('');
+  rows.querySelectorAll('tr').forEach((tr) => tr.addEventListener('click', () => openModal(tr.dataset.id)));
+}
+
+function lineRowHtml(item) {
+  const id = 'line' + (++lineCounter);
+  return `<div class="line-items-row" id="${id}">
+    <input class="li-desc" value="${escapeHtml(item?.description || '')}" placeholder="Service description">
+    <input class="li-qty" type="number" min="1" value="${item?.qty ?? 1}">
+    <input class="li-rate" type="number" step="0.01" value="${item?.rate ?? 0}">
+    <div class="li-amount" style="font-size:13px;">Rs. 0.00</div>
+    <span style="cursor:pointer;color:var(--danger);" onclick="document.getElementById('${id}').remove(); recalc();">&times;</span>
+  </div>`;
+}
+
+function recalc() {
+  const rows = document.querySelectorAll('#lineItems .line-items-row');
+  let subtotal = 0;
+  rows.forEach((row) => {
+    const qty = Number(row.querySelector('.li-qty').value || 0);
+    const rate = Number(row.querySelector('.li-rate').value || 0);
+    const amt = qty * rate;
+    row.querySelector('.li-amount').textContent = formatMoney(amt);
+    subtotal += amt;
+  });
+  const isInter = document.getElementById('f_interstate').value === 'true';
+  const gstRate = Number(document.getElementById('f_rate').value || 0);
+  let cgst = 0, sgst = 0, igst = 0;
+  if (isInter) igst = subtotal * gstRate / 100;
+  else { cgst = subtotal * gstRate / 200; sgst = subtotal * gstRate / 200; }
+  const total = subtotal + cgst + sgst + igst;
+  let html = `<div><span>Subtotal</span><span>${formatMoney(subtotal)}</span></div>`;
+  if (isInter) html += `<div><span>IGST</span><span>${formatMoney(igst)}</span></div>`;
+  else html += `<div><span>CGST</span><span>${formatMoney(cgst)}</span></div><div><span>SGST</span><span>${formatMoney(sgst)}</span></div>`;
+  html += `<div class="grand"><span>Total</span><span>${formatMoney(total)}</span></div>`;
+  document.getElementById('totalsBox').innerHTML = html;
+}
+
+function collectItems() {
+  return Array.from(document.querySelectorAll('#lineItems .line-items-row')).map((row) => ({
+    description: row.querySelector('.li-desc').value.trim(),
+    qty: Number(row.querySelector('.li-qty').value || 1),
+    rate: Number(row.querySelector('.li-rate').value || 0),
+  })).filter((it) => it.description);
+}
+
+function openModal(id) {
+  document.getElementById('formError').textContent = '';
+  const deleteBtn = document.getElementById('deleteBtn');
+  const pdfBtn = document.getElementById('pdfBtn');
+  const lineItems = document.getElementById('lineItems');
+  lineItems.innerHTML = '';
+
+  if (id) {
+    const inv = allInvoices.find((x) => x.id === id);
+    document.getElementById('modalTitle').textContent = 'Invoice ' + inv.invoiceNumber;
+    document.getElementById('invoiceId').value = inv.id;
+    document.getElementById('f_client').value = inv.clientId;
+    document.getElementById('f_org').value = inv.organisation || '';
+    document.getElementById('f_date').value = inv.date;
+    document.getElementById('f_due').value = inv.dueDate || '';
+    document.getElementById('f_interstate').value = String(inv.isInterState);
+    document.getElementById('f_rate').value = inv.gstRate;
+    document.getElementById('f_status').value = inv.status;
+    document.getElementById('f_notes').value = inv.notes || '';
+    document.getElementById('f_paid').value = inv.amountPaid || 0;
+    inv.items.forEach((it) => lineItems.insertAdjacentHTML('beforeend', lineRowHtml(it)));
+    deleteBtn.style.display = 'inline-flex';
+    pdfBtn.style.display = 'inline-flex';
+    pdfBtn.onclick = () => window.open('/api/invoices/' + inv.id + '/pdf', '_blank');
+    const sendBtn = document.getElementById('sendBtn');
+    sendBtn.style.display = 'inline-flex';
+    sendBtn.onclick = async () => {
+      const client = clients.find((c) => c.id === inv.clientId);
+      const to = prompt('Send this invoice to which email address?', (client && client.email) || '');
+      if (!to) return;
+      try {
+        await api('/email/send-invoice/' + inv.id, { method: 'POST', body: { to } });
+        alert('Invoice sent to ' + to + '.');
+        allInvoices = await api('/invoices');
+        renderRows();
+      } catch (err) {
+        alert('Could not send: ' + err.message);
+      }
+    };
+  } else {
+    document.getElementById('modalTitle').textContent = 'New Invoice';
+    document.getElementById('invoiceForm').reset();
+    document.getElementById('invoiceId').value = '';
+    document.getElementById('f_date').value = new Date().toISOString().slice(0, 10);
+    document.getElementById('f_rate').value = 18;
+    lineItems.insertAdjacentHTML('beforeend', lineRowHtml());
+    deleteBtn.style.display = 'none';
+    pdfBtn.style.display = 'none';
+    document.getElementById('sendBtn').style.display = 'none';
+  }
+  recalc();
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function closeModal() { document.getElementById('modalOverlay').classList.remove('open'); }
+
+(async () => {
+  await renderShell('/invoices.html', 'Billing / Invoices');
+  [clients, allInvoices] = await Promise.all([api('/clients'), api('/invoices')]);
+  clients.forEach((c) => clientMap[c.id] = c.name);
+  document.getElementById('f_client').innerHTML = clients.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  renderRows();
+
+  document.getElementById('filterStatus').addEventListener('change', renderRows);
+  document.getElementById('addBtn').addEventListener('click', () => openModal(null));
+  document.getElementById('closeModal').addEventListener('click', closeModal);
+  document.getElementById('cancelBtn').addEventListener('click', closeModal);
+  document.getElementById('addLineBtn').addEventListener('click', () => {
+    document.getElementById('lineItems').insertAdjacentHTML('beforeend', lineRowHtml());
+    recalc();
+  });
+  document.getElementById('lineItems').addEventListener('input', recalc);
+  document.getElementById('f_interstate').addEventListener('change', recalc);
+  document.getElementById('f_rate').addEventListener('input', recalc);
+
+  document.getElementById('invoiceForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = document.getElementById('invoiceId').value;
+    const items = collectItems();
+    if (!items.length) {
+      document.getElementById('formError').textContent = 'Add at least one line item';
+      return;
+    }
+    const payload = {
+      clientId: document.getElementById('f_client').value,
+      organisation: document.getElementById('f_org').value.trim(),
+      date: document.getElementById('f_date').value,
+      dueDate: document.getElementById('f_due').value,
+      isInterState: document.getElementById('f_interstate').value === 'true',
+      gstRate: Number(document.getElementById('f_rate').value || 0),
+      status: document.getElementById('f_status').value,
+      notes: document.getElementById('f_notes').value.trim(),
+      amountPaid: Number(document.getElementById('f_paid').value || 0),
+      items,
+    };
+    try {
+      if (id) await api('/invoices/' + id, { method: 'PUT', body: payload });
+      else await api('/invoices', { method: 'POST', body: payload });
+      allInvoices = await api('/invoices');
+      renderRows();
+      closeModal();
+    } catch (err) {
+      document.getElementById('formError').textContent = err.message;
+    }
+  });
+
+  document.getElementById('deleteBtn').addEventListener('click', async () => {
+    const id = document.getElementById('invoiceId').value;
+    if (!confirm('Delete this invoice?')) return;
+    await api('/invoices/' + id, { method: 'DELETE' });
+    allInvoices = await api('/invoices');
+    renderRows();
+    closeModal();
+  });
+})();
+</script>
+</body>
+</html>

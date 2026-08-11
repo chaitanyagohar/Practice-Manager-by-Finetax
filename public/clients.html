@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Clients - Practice Manager</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main">
+    <div class="topbar"><h1 id="pageTitle">Clients</h1></div>
+    <div class="content">
+      <div class="toolbar">
+        <input type="text" id="searchBox" placeholder="Search by name, PAN, GSTIN, email, phone..." style="max-width:340px;">
+        <div class="spacer"></div>
+        <button class="btn" id="addBtn">+ Add Client</button>
+      </div>
+      <div class="card" style="padding:0;">
+        <table>
+          <thead><tr><th>Name</th><th>Type</th><th>PAN</th><th>GSTIN</th><th>Phone</th><th>Status</th><th></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div class="empty-state" id="emptyState" style="display:none;">No clients yet. Click "Add Client" to create one.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <span class="close-x" id="closeModal">&times;</span>
+    <h2 id="modalTitle">Add Client</h2>
+    <form id="clientForm">
+      <input type="hidden" id="clientId">
+      <div class="form-grid">
+        <div class="form-row"><label>Client Name *</label><input id="f_name" required></div>
+        <div class="form-row"><label>Type</label>
+          <select id="f_type">
+            <option>Individual</option><option>Proprietorship</option><option>Partnership</option>
+            <option>LLP</option><option>Private Limited</option><option>Public Limited</option><option>Trust/NGO</option>
+          </select>
+        </div>
+        <div class="form-row"><label>PAN</label><input id="f_pan" placeholder="ABCDE1234F"></div>
+        <div class="form-row"><label>GSTIN</label><input id="f_gstin"></div>
+        <div class="form-row"><label>Email</label><input id="f_email" type="email"></div>
+        <div class="form-row"><label>Phone</label><input id="f_phone"></div>
+        <div class="form-row"><label>State</label><input id="f_state" placeholder="e.g. Delhi"></div>
+        <div class="form-row"><label>Status</label>
+          <select id="f_status"><option>Active</option><option>Inactive</option></select>
+        </div>
+      </div>
+      <div class="form-row"><label>Address</label><textarea id="f_address" rows="2"></textarea></div>
+      <div class="form-row"><label>Notes</label><textarea id="f_notes" rows="2"></textarea></div>
+      <div class="toolbar">
+        <button type="button" class="btn danger" id="deleteBtn" style="display:none;">Delete</button>
+        <div class="spacer"></div>
+        <button type="button" class="btn secondary" id="cancelBtn">Cancel</button>
+        <button type="submit" class="btn">Save Client</button>
+      </div>
+      <div class="error-msg" id="formError"></div>
+    </form>
+  </div>
+</div>
+
+<script src="/js/common.js"></script>
+<script>
+let allClients = [];
+
+function renderRows(list) {
+  const rows = document.getElementById('rows');
+  document.getElementById('emptyState').style.display = list.length ? 'none' : 'block';
+  rows.innerHTML = list.map((c) => `
+    <tr data-id="${c.id}" style="cursor:pointer;">
+      <td><strong>${escapeHtml(c.name)}</strong></td>
+      <td>${escapeHtml(c.type)}</td>
+      <td>${escapeHtml(c.pan)}</td>
+      <td>${escapeHtml(c.gstin)}</td>
+      <td>${escapeHtml(c.phone)}</td>
+      <td>${badge(c.status)}</td>
+      <td><a class="btn small secondary" data-open="${c.id}">Open</a></td>
+    </tr>
+  `).join('');
+  rows.querySelectorAll('tr').forEach((tr) => {
+    tr.addEventListener('click', () => openModal(tr.dataset.id));
+  });
+}
+
+function openModal(id) {
+  const overlay = document.getElementById('modalOverlay');
+  const deleteBtn = document.getElementById('deleteBtn');
+  document.getElementById('formError').textContent = '';
+  if (id) {
+    const c = allClients.find((x) => x.id === id);
+    document.getElementById('modalTitle').textContent = 'Edit Client';
+    document.getElementById('clientId').value = c.id;
+    document.getElementById('f_name').value = c.name || '';
+    document.getElementById('f_type').value = c.type || 'Individual';
+    document.getElementById('f_pan').value = c.pan || '';
+    document.getElementById('f_gstin').value = c.gstin || '';
+    document.getElementById('f_email').value = c.email || '';
+    document.getElementById('f_phone').value = c.phone || '';
+    document.getElementById('f_state').value = c.state || '';
+    document.getElementById('f_status').value = c.status || 'Active';
+    document.getElementById('f_address').value = c.address || '';
+    document.getElementById('f_notes').value = c.notes || '';
+    deleteBtn.style.display = 'inline-flex';
+  } else {
+    document.getElementById('modalTitle').textContent = 'Add Client';
+    document.getElementById('clientForm').reset();
+    document.getElementById('clientId').value = '';
+    deleteBtn.style.display = 'none';
+  }
+  overlay.classList.add('open');
+}
+function closeModal() { document.getElementById('modalOverlay').classList.remove('open'); }
+
+(async () => {
+  await renderShell('/clients.html', 'Clients');
+  allClients = await api('/clients');
+  renderRows(allClients);
+
+  document.getElementById('addBtn').addEventListener('click', () => openModal(null));
+  document.getElementById('closeModal').addEventListener('click', closeModal);
+  document.getElementById('cancelBtn').addEventListener('click', closeModal);
+
+  document.getElementById('searchBox').addEventListener('input', (e) => {
+    const s = e.target.value.toLowerCase();
+    renderRows(allClients.filter((c) =>
+      [c.name, c.pan, c.gstin, c.email, c.phone].filter(Boolean).some((f) => f.toLowerCase().includes(s))
+    ));
+  });
+
+  document.getElementById('clientForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = document.getElementById('clientId').value;
+    const payload = {
+      name: document.getElementById('f_name').value.trim(),
+      type: document.getElementById('f_type').value,
+      pan: document.getElementById('f_pan').value.trim().toUpperCase(),
+      gstin: document.getElementById('f_gstin').value.trim().toUpperCase(),
+      email: document.getElementById('f_email').value.trim(),
+      phone: document.getElementById('f_phone').value.trim(),
+      state: document.getElementById('f_state').value.trim(),
+      status: document.getElementById('f_status').value,
+      address: document.getElementById('f_address').value.trim(),
+      notes: document.getElementById('f_notes').value.trim(),
+    };
+    try {
+      if (id) await api('/clients/' + id, { method: 'PUT', body: payload });
+      else await api('/clients', { method: 'POST', body: payload });
+      allClients = await api('/clients');
+      renderRows(allClients);
+      closeModal();
+    } catch (err) {
+      document.getElementById('formError').textContent = err.message;
+    }
+  });
+
+  document.getElementById('deleteBtn').addEventListener('click', async () => {
+    const id = document.getElementById('clientId').value;
+    if (!confirm('Delete this client? This cannot be undone.')) return;
+    await api('/clients/' + id, { method: 'DELETE' });
+    allClients = await api('/clients');
+    renderRows(allClients);
+    closeModal();
+  });
+})();
+</script>
+</body>
+</html>

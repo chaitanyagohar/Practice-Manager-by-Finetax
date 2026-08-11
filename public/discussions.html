@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Client Discussions - Practice Manager</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main">
+    <div class="topbar"><h1 id="pageTitle">Client Discussions</h1></div>
+    <div class="content">
+      <div class="toolbar">
+        <input type="text" id="searchBox" placeholder="Search discussions..." style="max-width:220px;">
+        <select id="filterClient" style="max-width:240px;"><option value="">All clients</option></select>
+        <div class="spacer"></div>
+        <button class="btn" id="addBtn">+ Log Discussion</button>
+      </div>
+      <div class="card" style="padding:0;">
+        <table>
+          <thead><tr><th>Date</th><th>Client</th><th>Summary</th><th>Staff</th><th>Follow-up</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div class="empty-state" id="emptyState" style="display:none;">No discussions logged yet.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <span class="close-x" id="closeModal">&times;</span>
+    <h2 id="modalTitle">Log Discussion</h2>
+    <form id="itemForm">
+      <input type="hidden" id="itemId">
+      <div class="form-grid">
+        <div class="form-row"><label>Client *</label><select id="f_client" required></select></div>
+        <div class="form-row"><label>Date *</label><input id="f_date" type="date" required></div>
+      </div>
+      <div class="form-row"><label>Summary *</label><input id="f_summary" required placeholder="What was discussed, in one line"></div>
+      <div class="form-row"><label>Notes / Details</label><textarea id="f_notes" rows="3"></textarea></div>
+      <div class="form-grid">
+        <div class="form-row"><label>Handled By</label><input id="f_staff" placeholder="Staff name"></div>
+        <div class="form-row"><label>Follow-up Date</label><input id="f_followup" type="date"></div>
+      </div>
+      <div class="form-row">
+        <label><input type="checkbox" id="f_followupDone" style="width:auto; display:inline-block; margin-right:6px;">Follow-up completed</label>
+      </div>
+      <div class="toolbar">
+        <button type="button" class="btn danger" id="deleteBtn" style="display:none;">Delete</button>
+        <div class="spacer"></div>
+        <button type="button" class="btn secondary" id="cancelBtn">Cancel</button>
+        <button type="submit" class="btn">Save</button>
+      </div>
+      <div class="error-msg" id="formError"></div>
+    </form>
+  </div>
+</div>
+
+<script src="/js/common.js"></script>
+<script>
+let items = [], clients = [];
+const clientMap = {};
+
+function renderRows() {
+  const search = document.getElementById('searchBox').value.trim();
+  const clientId = document.getElementById('filterClient').value;
+  const params = new URLSearchParams();
+  if (search) params.set('search', search);
+  if (clientId) params.set('clientId', clientId);
+  api('/discussions' + (params.toString() ? '?' + params.toString() : '')).then((list) => {
+    items = list;
+    const rows = document.getElementById('rows');
+    document.getElementById('emptyState').style.display = list.length ? 'none' : 'block';
+    rows.innerHTML = list.map((d) => `
+      <tr data-id="${d.id}" style="cursor:pointer;">
+        <td>${formatDate(d.date)}</td>
+        <td>${escapeHtml(clientMap[d.clientId] || '-')}</td>
+        <td>${escapeHtml(d.summary)}</td>
+        <td>${escapeHtml(d.staff || '-')}</td>
+        <td>${d.followUpDate ? (d.followUpDone ? `<span class="badge status-Completed">Done</span>` : `<span class="badge status-Pending">${formatDate(d.followUpDate)}</span>`) : '<span class="muted">-</span>'}</td>
+      </tr>
+    `).join('');
+    rows.querySelectorAll('tr').forEach((tr) => tr.addEventListener('click', () => openModal(items.find((i) => i.id === tr.dataset.id))));
+  });
+}
+
+function openModal(item) {
+  document.getElementById('formError').textContent = '';
+  const deleteBtn = document.getElementById('deleteBtn');
+  if (item) {
+    document.getElementById('modalTitle').textContent = 'Edit Discussion';
+    document.getElementById('itemId').value = item.id;
+    document.getElementById('f_client').value = item.clientId;
+    document.getElementById('f_date').value = item.date;
+    document.getElementById('f_summary').value = item.summary;
+    document.getElementById('f_notes').value = item.notes || '';
+    document.getElementById('f_staff').value = item.staff || '';
+    document.getElementById('f_followup').value = item.followUpDate || '';
+    document.getElementById('f_followupDone').checked = !!item.followUpDone;
+    deleteBtn.style.display = 'inline-flex';
+  } else {
+    document.getElementById('modalTitle').textContent = 'Log Discussion';
+    document.getElementById('itemForm').reset();
+    document.getElementById('itemId').value = '';
+    document.getElementById('f_date').value = new Date().toISOString().slice(0, 10);
+    deleteBtn.style.display = 'none';
+  }
+  document.getElementById('modalOverlay').classList.add('open');
+}
+function closeModal() { document.getElementById('modalOverlay').classList.remove('open'); }
+
+(async () => {
+  await renderShell('/discussions.html', 'Client Discussions');
+  clients = await api('/clients');
+  clients.forEach((c) => clientMap[c.id] = c.name);
+  const options = clients.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+  document.getElementById('f_client').innerHTML = options;
+  document.getElementById('filterClient').innerHTML += options;
+
+  renderRows();
+  document.getElementById('searchBox').addEventListener('input', renderRows);
+  document.getElementById('filterClient').addEventListener('change', renderRows);
+  document.getElementById('addBtn').addEventListener('click', () => openModal(null));
+  document.getElementById('closeModal').addEventListener('click', closeModal);
+  document.getElementById('cancelBtn').addEventListener('click', closeModal);
+
+  document.getElementById('itemForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = document.getElementById('itemId').value;
+    const payload = {
+      clientId: document.getElementById('f_client').value,
+      date: document.getElementById('f_date').value,
+      summary: document.getElementById('f_summary').value.trim(),
+      notes: document.getElementById('f_notes').value.trim(),
+      staff: document.getElementById('f_staff').value.trim(),
+      followUpDate: document.getElementById('f_followup').value,
+      followUpDone: document.getElementById('f_followupDone').checked,
+    };
+    try {
+      if (id) await api('/discussions/' + id, { method: 'PUT', body: payload });
+      else await api('/discussions', { method: 'POST', body: payload });
+      renderRows();
+      closeModal();
+    } catch (err) {
+      document.getElementById('formError').textContent = err.message;
+    }
+  });
+
+  document.getElementById('deleteBtn').addEventListener('click', async () => {
+    const id = document.getElementById('itemId').value;
+    if (!confirm('Delete this discussion entry?')) return;
+    await api('/discussions/' + id, { method: 'DELETE' });
+    renderRows();
+    closeModal();
+  });
+})();
+</script>
+</body>
+</html>

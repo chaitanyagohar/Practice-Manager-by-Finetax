@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Dashboard - Practice Manager</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main">
+    <div class="topbar"><h1 id="pageTitle">Dashboard</h1></div>
+    <div class="content">
+      <div class="stat-grid" id="statGrid"></div>
+
+      <div class="dash-grid wide-first">
+        <div class="chart-card">
+          <div class="chart-head">
+            <h3>Active Clients</h3>
+            <span class="chart-big-number" id="activeClientsBig"></span>
+          </div>
+          <div class="chart-sub">Growth over the last 6 months</div>
+          <div id="clientGrowthChart" style="margin-top:6px;"></div>
+        </div>
+
+        <div class="chart-card">
+          <h3>Task Breakdown</h3>
+          <div class="chart-sub">By current status</div>
+          <div class="donut-row" id="taskDonutRow" style="margin-top:10px;"></div>
+        </div>
+      </div>
+
+      <div class="dash-grid wide-first">
+        <div class="chart-card">
+          <div class="chart-head">
+            <h3>Client Engagement Calendar</h3>
+            <a href="/calendar.html" class="chart-sub" style="text-decoration:underline;">Full calendar &rarr;</a>
+          </div>
+          <div class="chart-sub" id="engagementMonthLabel"></div>
+          <div class="calendar-grid mini" id="engWeekHeader" style="margin-top:8px;"></div>
+          <div class="calendar-grid mini" id="engGrid" style="margin-top:4px;"></div>
+        </div>
+
+        <div class="chart-card">
+          <h3>Task Progress</h3>
+          <div class="chart-sub">Tasks due per month — completed vs. open</div>
+          <div id="taskProgressChart" style="margin-top:6px;"></div>
+          <div class="bar-legend">
+            <span><span class="swatch" style="background:var(--success);"></span>Completed</span>
+            <span><span class="swatch" style="background:var(--accent);"></span>Open</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="mt-0" style="font-size:15px;">Upcoming deadlines (next 7 days)</h2>
+        <table id="upcomingTable">
+          <thead><tr><th>Due date</th><th>Task</th><th>Category</th><th>Client</th><th>Status</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="empty-state" id="upcomingEmpty" style="display:none;">Nothing due in the next 7 days.</div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/js/common.js"></script>
+<script>
+(async () => {
+  await renderShell('/dashboard.html', 'Dashboard');
+  const clients = await api('/clients');
+  const clientMap = {};
+  clients.forEach((c) => clientMap[c.id] = c.name);
+
+  const s = await api('/dashboard/summary');
+  document.getElementById('statGrid').innerHTML = `
+    <div class="stat-card"><div class="label">Active Clients</div><div class="value">${s.activeClients}</div></div>
+    <div class="stat-card"><div class="label">Pending Tasks</div><div class="value">${s.pendingTasks}</div></div>
+    <div class="stat-card warn"><div class="label">Overdue Tasks</div><div class="value">${s.overdueTasks}</div></div>
+    <div class="stat-card"><div class="label">Invoiced This Month</div><div class="value" style="font-size:19px;">${formatMoney(s.invoicedThisMonth)}</div></div>
+    <div class="stat-card warn"><div class="label">Outstanding Receivables</div><div class="value" style="font-size:19px;">${formatMoney(s.outstanding)}</div></div>
+  `;
+
+  const tbody = document.querySelector('#upcomingTable tbody');
+  if (!s.upcomingTasks.length) {
+    document.getElementById('upcomingEmpty').style.display = 'block';
+  } else {
+    tbody.innerHTML = s.upcomingTasks.map((t) => `
+      <tr>
+        <td>${formatDate(t.dueDate)}</td>
+        <td>${escapeHtml(t.title)}</td>
+        <td>${escapeHtml(t.category)}</td>
+        <td>${escapeHtml(clientMap[t.clientId] || '-')}</td>
+        <td>${badge(t.status)}</td>
+      </tr>
+    `).join('');
+  }
+
+  // ---- New analytics cards (Active Clients / Task Breakdown / Engagement Calendar / Task Progress) ----
+  const a = await api('/dashboard/analytics');
+
+  document.getElementById('activeClientsBig').textContent = a.activeClientCount;
+  document.getElementById('clientGrowthChart').innerHTML = renderLineChart(a.clientGrowth);
+
+  const statusColors = {
+    Pending: CHART_COLORS.accent,
+    'In Progress': '#1a4d8f',
+    Overdue: CHART_COLORS.danger,
+    Completed: CHART_COLORS.success,
+  };
+  const donutSegments = Object.entries(a.taskByStatus)
+    .filter(([, v]) => v > 0)
+    .map(([label, value]) => ({ label, value, color: statusColors[label] || CHART_COLORS.muted }));
+  document.getElementById('taskDonutRow').innerHTML = `
+    ${renderDonutChart(donutSegments)}
+    <div class="donut-legend">
+      ${donutSegments.map((seg) => `<span><span class="swatch" style="background:${seg.color};"></span>${seg.label} (${seg.value})</span>`).join('')}
+    </div>
+  `;
+
+  document.getElementById('taskProgressChart').innerHTML = renderStackedBarChart(a.taskProgress);
+
+  renderEngagementCalendar(a.engagementMonth, a.engagements);
+
+  function renderEngagementCalendar(monthStr, engagements) {
+    const [y, m] = monthStr.split('-').map(Number);
+    document.getElementById('engagementMonthLabel').textContent =
+      new Date(y, m - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+
+    document.getElementById('engWeekHeader').innerHTML = ['S','M','T','W','T','F','S']
+      .map((d) => `<div class="week-header" style="text-align:center; color:var(--muted); font-weight:600;">${d}</div>`).join('');
+
+    const firstDay = new Date(y, m - 1, 1).getDay();
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const todayKey = new Date().toISOString().slice(0, 10);
+    const byDate = {};
+    engagements.forEach((e) => { (byDate[e.date] = byDate[e.date] || []).push(e); });
+
+    let cells = '';
+    for (let i = 0; i < firstDay; i++) cells += `<div class="calendar-cell empty"></div>`;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const key = `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const dayEng = byDate[key] || [];
+      const isToday = key === todayKey;
+      const chips = dayEng.slice(0, 2).map((e) => {
+        const cls = e.status === 'Completed' ? 'completed' : (e.status === 'Overdue' ? 'overdue' : '');
+        return `<div class="task-chip ${cls}" title="${escapeHtml(e.clientName + ' — ' + e.title)}">${escapeHtml(e.clientName)}</div>`;
+      }).join('');
+      const more = dayEng.length > 2 ? `<div style="font-size:8px;color:var(--muted);">+${dayEng.length - 2}</div>` : '';
+      cells += `<div class="calendar-cell ${isToday ? 'today' : ''}"><div class="daynum">${d}</div>${chips}${more}</div>`;
+    }
+    document.getElementById('engGrid').innerHTML = cells;
+  }
+})();
+</script>
+</body>
+</html>

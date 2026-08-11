@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Compliance Calendar - Practice Manager</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main">
+    <div class="topbar"><h1 id="pageTitle">Compliance Calendar</h1></div>
+    <div class="content">
+      <div class="toolbar">
+        <button class="btn secondary small" id="prevBtn">&larr; Prev</button>
+        <div id="monthLabel" style="font-weight:700; font-size:15px; min-width:160px; text-align:center;"></div>
+        <button class="btn secondary small" id="nextBtn">Next &rarr;</button>
+        <div class="spacer"></div>
+        <button class="btn secondary small" id="todayBtn">Today</button>
+      </div>
+      <div class="card">
+        <div class="calendar-grid" id="weekHeader"></div>
+        <div class="calendar-grid" id="grid" style="margin-top:6px;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/js/common.js"></script>
+<script>
+let cursor = new Date();
+cursor.setDate(1);
+let tasks = [], clientMap = {};
+
+function pad(n) { return String(n).padStart(2, '0'); }
+function dateKey(y, m, d) { return `${y}-${pad(m + 1)}-${pad(d)}`; }
+
+function render() {
+  const y = cursor.getFullYear(), m = cursor.getMonth();
+  document.getElementById('monthLabel').textContent = cursor.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+
+  const weekHeader = document.getElementById('weekHeader');
+  weekHeader.innerHTML = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
+    .map((d) => `<div style="text-align:center; font-size:11px; color:var(--muted); font-weight:600;">${d}</div>`).join('');
+
+  const firstDay = new Date(y, m, 1).getDay();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const todayKey = new Date().toISOString().slice(0, 10);
+
+  const tasksByDate = {};
+  tasks.forEach((t) => {
+    if (!t.dueDate) return;
+    (tasksByDate[t.dueDate] = tasksByDate[t.dueDate] || []).push(t);
+  });
+
+  let cells = '';
+  for (let i = 0; i < firstDay; i++) cells += `<div class="calendar-cell empty"></div>`;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const key = dateKey(y, m, d);
+    const dayTasks = tasksByDate[key] || [];
+    const isToday = key === todayKey;
+    const chips = dayTasks.slice(0, 4).map((t) => {
+      const cls = t.status === 'Completed' ? 'completed' : (t.status === 'Overdue' ? 'overdue' : '');
+      const clientName = clientMap[t.clientId] ? ` - ${clientMap[t.clientId]}` : '';
+      return `<div class="task-chip ${cls}" data-id="${t.id}" title="${escapeHtml(t.title + clientName)}">${escapeHtml(t.title)}</div>`;
+    }).join('');
+    const more = dayTasks.length > 4 ? `<div style="font-size:10px;color:var(--muted);margin-top:2px;">+${dayTasks.length - 4} more</div>` : '';
+    cells += `<div class="calendar-cell ${isToday ? 'today' : ''}"><div class="daynum">${d}</div>${chips}${more}</div>`;
+  }
+  document.getElementById('grid').innerHTML = cells;
+  document.querySelectorAll('.task-chip').forEach((chip) => {
+    chip.addEventListener('click', () => { window.location.href = '/tasks.html'; });
+  });
+}
+
+(async () => {
+  await renderShell('/calendar.html', 'Compliance Calendar');
+  const [clients, allTasks] = await Promise.all([api('/clients'), api('/tasks')]);
+  clients.forEach((c) => clientMap[c.id] = c.name);
+  tasks = allTasks;
+  render();
+
+  document.getElementById('prevBtn').addEventListener('click', () => { cursor.setMonth(cursor.getMonth() - 1); render(); });
+  document.getElementById('nextBtn').addEventListener('click', () => { cursor.setMonth(cursor.getMonth() + 1); render(); });
+  document.getElementById('todayBtn').addEventListener('click', () => { cursor = new Date(); cursor.setDate(1); render(); });
+})();
+</script>
+</body>
+</html>
