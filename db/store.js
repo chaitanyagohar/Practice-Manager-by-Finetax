@@ -1,99 +1,46 @@
-// Lightweight JSON-file data store.
-// No native/compiled dependencies -> installs reliably on any office PC.
-// Each "collection" is a JSON array stored in /data/<name>.json.
-// Writes are queued per-collection to avoid corruption when multiple
-// LAN users hit the server at once.
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const { createClient } = require('@supabase/supabase-js');
 
-let DATA_DIR = path.join(__dirname, '..', 'data');
+// Connect to Supabase using Environment Variables
+const supabaseUrl = process.env.SUPABASE_URL || 'https://mximtapakqpjmkcupxay.supabase.co';
+const supabaseKey = process.env.SUPABASE_KEY || 'sb_publishable_-kjbxfBV2emYaalQYLy3gg_ITzG9giQ';
+const supabase = createClient(supabaseUrl, supabaseKey);
 
-try {
-  // Try to create the local folder first
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-} catch (error) {
-  // If Vercel blocks it (read-only filesystem), catch the error and use /tmp
-  console.log('Local folder creation failed, falling back to /tmp/data');
-  DATA_DIR = path.join(os.tmpdir(), 'data');
-  
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-}
-
-const writeQueues = {};
-
-function filePath(name) {
-  return path.join(DATA_DIR, `${name}.json`);
-}
-
-function ensureFile(name) {
-  const fp = filePath(name);
-  if (!fs.existsSync(fp)) {
-    fs.writeFileSync(fp, '[]', 'utf8');
-  }
-  return fp;
-}
-
-function readAll(name) {
-  const fp = ensureFile(name);
-  const raw = fs.readFileSync(fp, 'utf8').trim();
-  if (!raw) return [];
-  try {
-    return JSON.parse(raw);
-  } catch (e) {
-    console.error(`Corrupt data file ${name}.json, resetting to empty array`, e);
+// Read all records from a table
+async function readAll(tableName) {
+  const { data, error } = await supabase.from(tableName).select('*');
+  if (error) {
+    console.error(`Error reading ${tableName}:`, error);
     return [];
   }
+  return data;
 }
 
-// Serializes writes to the same collection so concurrent requests
-// never interleave file writes.
-function queueWrite(name, fn) {
-  const prev = writeQueues[name] || Promise.resolve();
-  const next = prev
-    .catch(() => {})
-    .then(async () => {
-      const data = readAll(name);
-      const result = await fn(data);
-      const fp = filePath(name);
-      const tmp = fp + '.tmp';
-      fs.writeFileSync(tmp, JSON.stringify(result.data, null, 2), 'utf8');
-      fs.renameSync(tmp, fp);
-      return result.returnValue;
-    });
-  writeQueues[name] = next;
-  return next;
+// Insert a new record
+async function insert(tableName, record) {
+  const { data, error } = await supabase.from(tableName).insert([record]).select();
+  if (error) throw error;
+  return { returnValue: data[0] };
 }
 
-function insert(name, record) {
-  return queueWrite(name, (data) => {
-    data.push(record);
-    return { data, returnValue: record };
-  });
+// Update an existing record
+async function update(tableName, id, patch) {
+  const { data, error } = await supabase.from(tableName).update(patch).eq('id', id).select();
+  if (error) throw error;
+  return { returnValue: data[0] };
 }
 
-function update(name, id, patch) {
-  return queueWrite(name, (data) => {
-    const idx = data.findIndex((r) => r.id === id);
-    if (idx === -1) return { data, returnValue: null };
-    data[idx] = { ...data[idx], ...patch, id };
-    return { data, returnValue: data[idx] };
-  });
+// Delete a record
+async function remove(tableName, id) {
+  const { error } = await supabase.from(tableName).delete().eq('id', id);
+  if (error) throw error;
+  return { returnValue: true };
 }
 
-function remove(name, id) {
-  return queueWrite(name, (data) => {
-    const next = data.filter((r) => r.id !== id);
-    return { data: next, returnValue: next.length !== data.length };
-  });
+// Find a single record by ID
+async function findById(tableName, id) {
+  const { data, error } = await supabase.from(tableName).select('*').eq('id', id).single();
+  if (error) return null;
+  return data;
 }
 
-function findById(name, id) {
-  return readAll(name).find((r) => r.id === id) || null;
-}
-
-module.exports = { readAll, insert, update, remove, findById, DATA_DIR };
+module.exports = { readAll, insert, update, remove, findById, supabase };
