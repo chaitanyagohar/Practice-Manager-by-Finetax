@@ -1,16 +1,21 @@
 // Lightweight JSON-file data store.
-// No native/compiled dependencies -> installs reliably on any office PC.
-// Each "collection" is a JSON array stored in /data/<name>.json.
-// Writes are queued per-collection to avoid corruption when multiple
-// LAN users hit the server at once.
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os'); // MUST ADD THIS
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+// Check if running on Vercel. If yes, use /tmp/data. If not, use local folder.
+const DATA_DIR = process.env.VERCEL 
+  ? path.join(os.tmpdir(), 'data') 
+  : path.join(__dirname, '..', 'data');
+
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
 
 const writeQueues = {};
+
+// ... rest of your store.js code stays exactly the same ...
 
 function filePath(name) {
   return path.join(DATA_DIR, `${name}.json`);

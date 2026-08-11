@@ -54,19 +54,30 @@ module.exports = app;
 
 // ONLY run the seed script and local server if you are NOT on Vercel
 if (process.env.NODE_ENV !== 'production') {
-  seed().then(() => {
-    app.listen(PORT, '0.0.0.0', () => {
-      const nets = os.networkInterfaces();
-      console.log('\nPractice Manager is running.');
-      console.log(`  On this PC:      http://localhost:${PORT}`);
-      Object.values(nets).flat().forEach((net) => {
-        if (net && net.family === 'IPv4' && !net.internal) {
-          console.log(`  On office LAN:   http://${net.address}:${PORT}   <-- share this with your team`);
-        }
-      });
-      console.log('\nDefault login -> username: admin / password: admin123 (change this after first login)\n');
+// Run seed EVERY time so Vercel's /tmp database has the default admin user
+seed().then(() => {
+  console.log('Database seeded successfully.');
+}).catch(err => {
+  console.error('Failed to seed database:', err);
+});
+
+// ONLY listen to the port locally, let Vercel handle routing
+if (process.env.NODE_ENV !== 'production') {
+  const os = require('os');
+  const PORT = process.env.PORT || 3000;
+  
+  app.listen(PORT, '0.0.0.0', () => {
+    const nets = os.networkInterfaces();
+    console.log('\nPractice Manager is running.');
+    console.log(`  On this PC:      http://localhost:${PORT}`);
+    Object.values(nets).flat().forEach((net) => {
+      if (net && net.family === 'IPv4' && !net.internal) {
+        console.log(`  On office LAN:   http://${net.address}:${PORT}   <-- share this with your team`);
+      }
     });
-  }).catch(err => {
-    console.error('Failed to seed database:', err);
+    console.log('\nDefault login -> username: admin / password: admin123 (change this after first login)\n');
   });
 }
+
+// CRITICAL FOR VERCEL: Export the app
+module.exports = app;
