@@ -5,14 +5,13 @@ const supabaseUrl = process.env.SUPABASE_URL || 'https://mximtapakqpjmkcupxay.su
 const supabaseKey = process.env.SUPABASE_KEY || 'sb_publishable_-kjbxfBV2emYaalQYLy3gg_ITzG9giQ';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Read all records from a table
 async function readAll(tableName) {
   const { data, error } = await supabase.from(tableName).select('*');
   if (error) {
     console.error(`Error reading ${tableName}:`, error);
-    return [];
+    return []; // ALWAYS return an empty array on error
   }
-  return data;
+  return data || []; // ALWAYS fallback to empty array if data is null/undefined
 }
 
 // Insert a new record
