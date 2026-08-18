@@ -11,29 +11,35 @@
   <div class="main">
     <div class="topbar"><h1 id="pageTitle">Dashboard</h1></div>
     <div class="content">
+      
+      <!-- Stats Row (Dynamic based on role) -->
       <div class="stat-grid" id="statGrid"></div>
 
-      <div class="dash-grid wide-first">
-        <div class="chart-card">
-          <div class="chart-head">
-            <h3>Active Clients</h3>
-            <span class="chart-big-number" id="activeClientsBig"></span>
+      <!-- ADMIN ONLY: Charts & Growth -->
+      <div id="adminOnlyView" style="display: none;">
+        <div class="dash-grid wide-first">
+          <div class="chart-card">
+            <div class="chart-head">
+              <h3>Active Clients</h3>
+              <span class="chart-big-number" id="activeClientsBig"></span>
+            </div>
+            <div class="chart-sub">Growth over the last 6 months</div>
+            <div id="clientGrowthChart" style="margin-top:6px;"></div>
           </div>
-          <div class="chart-sub">Growth over the last 6 months</div>
-          <div id="clientGrowthChart" style="margin-top:6px;"></div>
-        </div>
 
-        <div class="chart-card">
-          <h3>Task Breakdown</h3>
-          <div class="chart-sub">By current status</div>
-          <div class="donut-row" id="taskDonutRow" style="margin-top:10px;"></div>
+          <div class="chart-card">
+            <h3>Task Breakdown</h3>
+            <div class="chart-sub">By current status</div>
+            <div class="donut-row" id="taskDonutRow" style="margin-top:10px;"></div>
+          </div>
         </div>
       </div>
 
-      <div class="dash-grid wide-first">
-        <div class="chart-card">
+      <!-- SHARED VIEW: Calendar and Task Progress -->
+      <div class="dash-grid wide-first" id="sharedDashGrid" style="margin-top: 20px;">
+        <div class="chart-card" id="calendarCard">
           <div class="chart-head">
-            <h3>Client Engagement Calendar</h3>
+            <h3 id="calendarTitle">Engagement Calendar</h3>
             <a href="/calendar.html" class="chart-sub" style="text-decoration:underline;">Full calendar &rarr;</a>
           </div>
           <div class="chart-sub" id="engagementMonthLabel"></div>
@@ -41,7 +47,7 @@
           <div class="calendar-grid mini" id="engGrid" style="margin-top:4px;"></div>
         </div>
 
-        <div class="chart-card">
+        <div class="chart-card" id="taskProgressCard">
           <h3>Task Progress</h3>
           <div class="chart-sub">Tasks due per month — completed vs. open</div>
           <div id="taskProgressChart" style="margin-top:6px;"></div>
@@ -52,8 +58,9 @@
         </div>
       </div>
 
-      <div class="card">
-        <h2 class="mt-0" style="font-size:15px;">Upcoming deadlines (next 7 days)</h2>
+      <!-- SHARED VIEW: Upcoming Tasks -->
+      <div class="card" style="margin-top: 20px;">
+        <h2 class="mt-0" style="font-size:15px;" id="upcomingTitle">Upcoming deadlines (next 7 days)</h2>
         <table id="upcomingTable">
           <thead><tr><th>Due date</th><th>Task</th><th>Category</th><th>Client</th><th>Status</th></tr></thead>
           <tbody></tbody>
@@ -72,14 +79,47 @@
   clients.forEach((c) => clientMap[c.id] = c.name);
 
   const s = await api('/dashboard/summary');
-  document.getElementById('statGrid').innerHTML = `
-    <div class="stat-card"><div class="label">Active Clients</div><div class="value">${s.activeClients}</div></div>
-    <div class="stat-card"><div class="label">Pending Tasks</div><div class="value">${s.pendingTasks}</div></div>
-    <div class="stat-card warn"><div class="label">Overdue Tasks</div><div class="value">${s.overdueTasks}</div></div>
-    <div class="stat-card"><div class="label">Invoiced This Month</div><div class="value" style="font-size:19px;">${formatMoney(s.invoicedThisMonth)}</div></div>
-    <div class="stat-card warn"><div class="label">Outstanding Receivables</div><div class="value" style="font-size:19px;">${formatMoney(s.outstanding)}</div></div>
-  `;
+  
+  // --- ROLE-BASED UI RENDERING ---
+  const titleEl = document.getElementById('pageTitle');
+  const adminView = document.getElementById('adminOnlyView');
+  const statGrid = document.getElementById('statGrid');
 
+  if (s.scoped) {
+    // STAFF DASHBOARD
+    titleEl.innerHTML = `My Workspace`;
+    document.getElementById('calendarTitle').innerText = "My Calendar";
+    document.getElementById('upcomingTitle').innerText = "My Upcoming Deadlines";
+    
+    // Clean stats for staff (no financials)
+    statGrid.innerHTML = `
+      <div class="stat-card"><div class="label">My Assigned Clients</div><div class="value">${s.activeClients}</div></div>
+      <div class="stat-card"><div class="label">My Pending Tasks</div><div class="value">${s.pendingTasks}</div></div>
+      <div class="stat-card warn"><div class="label">My Overdue Tasks</div><div class="value">${s.overdueTasks}</div></div>
+      <div class="stat-card"><div class="label">Due This Week</div><div class="value">${s.upcomingTasks.length}</div></div>
+    `;
+    
+    // Hide Admin sections
+    adminView.style.display = 'none';
+
+  } else {
+    // ADMIN DASHBOARD
+    titleEl.innerHTML = `Firm Dashboard <span style="font-size:14px; font-weight:normal; color:var(--muted); margin-left:8px;">(Overview)</span>`;
+    
+    // Full financials for Admin
+    statGrid.innerHTML = `
+      <div class="stat-card"><div class="label">Active Clients</div><div class="value">${s.activeClients}</div></div>
+      <div class="stat-card"><div class="label">Pending Tasks</div><div class="value">${s.pendingTasks}</div></div>
+      <div class="stat-card warn"><div class="label">Overdue Tasks</div><div class="value">${s.overdueTasks}</div></div>
+      <div class="stat-card"><div class="label">Invoiced This Month</div><div class="value" style="font-size:19px;">${formatMoney(s.invoicedThisMonth)}</div></div>
+      <div class="stat-card warn"><div class="label">Outstanding Receivables</div><div class="value" style="font-size:19px;">${formatMoney(s.outstanding)}</div></div>
+    `;
+    
+    // Show Admin charts
+    adminView.style.display = 'block';
+  }
+
+  // --- POPULATE TABLES & CHARTS ---
   const tbody = document.querySelector('#upcomingTable tbody');
   if (!s.upcomingTasks.length) {
     document.getElementById('upcomingEmpty').style.display = 'block';
@@ -95,30 +135,33 @@
     `).join('');
   }
 
-  // ---- New analytics cards (Active Clients / Task Breakdown / Engagement Calendar / Task Progress) ----
   const a = await api('/dashboard/analytics');
 
-  document.getElementById('activeClientsBig').textContent = a.activeClientCount;
-  document.getElementById('clientGrowthChart').innerHTML = renderLineChart(a.clientGrowth);
+  // Only render Admin charts if not scoped
+  if (!s.scoped) {
+    document.getElementById('activeClientsBig').textContent = a.activeClientCount;
+    document.getElementById('clientGrowthChart').innerHTML = renderLineChart(a.clientGrowth);
 
-  const statusColors = {
-    Pending: CHART_COLORS.accent,
-    'In Progress': '#1a4d8f',
-    Overdue: CHART_COLORS.danger,
-    Completed: CHART_COLORS.success,
-  };
-  const donutSegments = Object.entries(a.taskByStatus)
-    .filter(([, v]) => v > 0)
-    .map(([label, value]) => ({ label, value, color: statusColors[label] || CHART_COLORS.muted }));
-  document.getElementById('taskDonutRow').innerHTML = `
-    ${renderDonutChart(donutSegments)}
-    <div class="donut-legend">
-      ${donutSegments.map((seg) => `<span><span class="swatch" style="background:${seg.color};"></span>${seg.label} (${seg.value})</span>`).join('')}
-    </div>
-  `;
+    const statusColors = {
+      Pending: CHART_COLORS.accent,
+      'In Progress': '#1a4d8f',
+      Overdue: CHART_COLORS.danger,
+      Completed: CHART_COLORS.success,
+    };
+    const donutSegments = Object.entries(a.taskByStatus)
+      .filter(([, v]) => v > 0)
+      .map(([label, value]) => ({ label, value, color: statusColors[label] || CHART_COLORS.muted }));
+    
+    document.getElementById('taskDonutRow').innerHTML = `
+      ${renderDonutChart(donutSegments)}
+      <div class="donut-legend">
+        ${donutSegments.map((seg) => `<span><span class="swatch" style="background:${seg.color};"></span>${seg.label} (${seg.value})</span>`).join('')}
+      </div>
+    `;
+  }
 
+  // Always render Progress and Calendar
   document.getElementById('taskProgressChart').innerHTML = renderStackedBarChart(a.taskProgress);
-
   renderEngagementCalendar(a.engagementMonth, a.engagements);
 
   function renderEngagementCalendar(monthStr, engagements) {

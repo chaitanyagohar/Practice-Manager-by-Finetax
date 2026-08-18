@@ -15,6 +15,38 @@ const logoUpload = multer({
   },
 });
 
+// --- NEW ASYNC SCOPING HELPER ---
+async function getScopedData(req) {
+  // 1. Safely read from database and ensure they are arrays
+  const rawClients = await store.readAll('clients');
+  const clients = Array.isArray(rawClients) ? rawClients : [];
+  
+  const rawTasks = await store.readAll('tasks');
+  const tasks = Array.isArray(rawTasks) ? rawTasks : [];
+  
+  const rawInvoices = await store.readAll('invoices');
+  const invoices = Array.isArray(rawInvoices) ? rawInvoices : [];
+
+  // 2. Admin Check
+  const canViewAll = req.session && req.session.role === 'admin';
+  if (canViewAll) return { clients, tasks, invoices, scoped: false };
+
+  // 3. Staff Check
+  const me = req.session && req.session.name ? req.session.name.toLowerCase() : null;
+  
+  const myClients = clients.filter((c) => c.assignedTo && c.assignedTo.toLowerCase() === me);
+  const myClientIds = new Set(myClients.map((c) => c.id));
+  
+  const myTasks = tasks.filter((t) => t.assignedTo && t.assignedTo.toLowerCase() === me);
+  const myInvoices = invoices.filter((i) => myClientIds.has(i.clientId));
+
+  // ADDED DEBUG LOG: Check the terminal to see what the dashboard is returning!
+  console.log(`[Dashboard Debug] Staff Logged In: ${me} | Tasks Found For Them: ${myTasks.length}`);
+
+  return { clients: myClients, tasks: myTasks, invoices: myInvoices, scoped: true };
+}
+// --------------------------------
+
 router.post('/settings/logo', requireRole('admin'), logoUpload.single('logo'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
   
@@ -48,9 +80,8 @@ router.get('/settings/logo', async (req, res) => {
 });
 
 router.get('/summary', async (req, res) => {
-  const clients = await store.readAll('clients');
-  const tasks = await store.readAll('tasks');
-  const invoices = await store.readAll('invoices');
+  // Use scoped data instead of raw db calls
+  const { clients, tasks, invoices, scoped } = await getScopedData(req);
   
   const today = new Date().toISOString().slice(0, 10);
   const in7 = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
@@ -72,6 +103,7 @@ router.get('/summary', async (req, res) => {
     .reduce((sum, i) => sum + Math.max(0, (Number(i.total) || 0) - (Number(i.amountPaid) || 0)), 0);
 
   res.json({
+    scoped,
     activeClients,
     pendingTasks,
     overdueTasks,
@@ -113,8 +145,8 @@ function computedTaskStatus(t, today) {
 function monthKey(d) { return d.toISOString().slice(0, 7); }
 
 router.get('/analytics', async (req, res) => {
-  const clients = await store.readAll('clients');
-  const tasks = await store.readAll('tasks');
+  // Use scoped data instead of raw db calls
+  const { clients, tasks, scoped } = await getScopedData(req);
   
   const today = new Date().toISOString().slice(0, 10);
   const now = new Date();
@@ -161,6 +193,7 @@ router.get('/analytics', async (req, res) => {
     .sort((a, b) => a.date.localeCompare(b.date));
 
   res.json({
+    scoped,
     activeClientCount: activeClients.length,
     clientGrowth,
     taskByStatus,

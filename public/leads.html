@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Enquiries & Leads - Practice Manager</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main">
+    <div class="topbar"><h1 id="pageTitle">Enquiries & Leads</h1></div>
+    <div class="content">
+      <div class="toolbar">
+        <input type="text" id="searchBox" placeholder="Search leads by name, phone..." style="max-width:250px;">
+        <select id="filterStatus" style="max-width:160px;">
+          <option value="">All Statuses</option>
+        </select>
+        <select id="filterService" style="max-width:200px;">
+          <option value="">All Services</option>
+        </select>
+        <div class="spacer"></div>
+        <button class="btn" id="addBtn">+ Add Lead</button> 
+      </div>
+      <div class="card" style="padding:0;">
+        <table>
+          <thead><tr><th>Lead Name</th><th>Contact</th><th>Service Required</th><th>Follow-Up Date</th><th>Assigned To</th><th>Status</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div class="empty-state" id="emptyState" style="display:none;">No leads found.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <span class="close-x" id="closeModal">&times;</span>
+    <h2 id="modalTitle">Add Lead</h2>
+    <form id="leadForm">
+      <input type="hidden" id="leadId">
+      <div class="form-row"><label>Lead Name *</label><input id="f_name" required placeholder="Person or Company Name"></div>
+      <div class="form-grid">
+        <div class="form-row"><label>Phone *</label><input id="f_phone" required placeholder="Phone Number"></div>
+        <div class="form-row"><label>Email</label><input id="f_email" type="email" placeholder="Email Address"></div>
+        <div class="form-row"><label>Service</label><select id="f_service"></select></div>
+        <div class="form-row"><label>Status</label><select id="f_status"></select></div>
+        <div class="form-row"><label>Follow-up Date</label><input id="f_followup" type="date"></div>
+        <div class="form-row"><label>Assigned To</label><input id="f_assigned" placeholder="Staff Name"></div>
+      </div>
+      <div class="form-row"><label>Notes & Remarks</label><textarea id="f_notes" rows="3" placeholder="Discussion details..."></textarea></div>
+      <div class="toolbar">
+        <button type="button" class="btn danger" id="deleteBtn" style="display:none;">Delete</button>
+        <div class="spacer"></div>
+        <button type="button" class="btn secondary" id="cancelBtn">Cancel</button>
+        <button type="submit" class="btn">Save Lead</button>
+      </div>
+      <div class="error-msg" id="formError"></div>
+    </form>
+  </div>
+</div>
+
+<script src="/js/common.js"></script>
+<script>
+let allLeads = [], services = [], statuses = [];
+let isAdmin = false; 
+
+function renderRows() {
+  const status = document.getElementById('filterStatus').value;
+  const service = document.getElementById('filterService').value;
+  const search = document.getElementById('searchBox').value.trim().toLowerCase();
+  let list = allLeads;
+  
+  if (status) list = list.filter((l) => l.status === status);
+  if (service) list = list.filter((l) => l.serviceRequested === service);
+  if (search) list = list.filter((l) => [l.name, l.phone, l.email, l.notes].filter(Boolean).some((f) => f.toLowerCase().includes(search)));
+
+  const rows = document.getElementById('rows');
+  document.getElementById('emptyState').style.display = list.length ? 'none' : 'block';
+  rows.innerHTML = list.map((l) => `
+    <tr data-id="${l.id}" style="cursor:pointer;">
+      <td style="font-weight:600;">${escapeHtml(l.name)}</td>
+      <td>${escapeHtml(l.phone)}<br><small class="muted">${escapeHtml(l.email)}</small></td>
+      <td>${escapeHtml(l.serviceRequested)}</td>
+      <td>${l.followUpDate ? formatDate(l.followUpDate) : '-'}</td>
+      <td>${escapeHtml(l.assignedTo || '-')}</td>
+      <td>${badge(l.status)}</td>
+    </tr>
+  `).join('');
+  rows.querySelectorAll('tr').forEach((tr) => tr.addEventListener('click', () => openModal(tr.dataset.id)));
+}
+
+function openModal(id) {
+  document.getElementById('formError').textContent = '';
+  const deleteBtn = document.getElementById('deleteBtn');
+  
+  if (id) {
+    const l = allLeads.find((x) => x.id === id);
+    document.getElementById('modalTitle').textContent = 'Edit Lead';
+    document.getElementById('leadId').value = l.id;
+    document.getElementById('f_name').value = l.name;
+    document.getElementById('f_phone').value = l.phone;
+    document.getElementById('f_email').value = l.email || '';
+    document.getElementById('f_service').value = l.serviceRequested;
+    document.getElementById('f_status').value = l.status;
+    document.getElementById('f_followup').value = l.followUpDate || '';
+    document.getElementById('f_assigned').value = l.assignedTo || '';
+    document.getElementById('f_notes').value = l.notes || '';
+    
+    deleteBtn.style.display = (isAdmin) ? 'inline-flex' : 'none';
+  } else {
+    document.getElementById('modalTitle').textContent = 'Add Lead';
+    document.getElementById('leadForm').reset();
+    document.getElementById('leadId').value = '';
+    deleteBtn.style.display = 'none';
+  }
+  document.getElementById('modalOverlay').classList.add('open');
+}
+
+function closeModal() { document.getElementById('modalOverlay').classList.remove('open'); }
+
+(async () => {
+  await renderShell('/leads.html', 'Enquiries & Leads');
+  
+  try {
+    const user = await api('/me').catch(() => api('/auth/me'));
+    if (user && user.role === 'admin') isAdmin = true;
+  } catch (err) { }
+
+  [services, statuses, allLeads] = await Promise.all([
+    api('/leads/meta/services'), api('/leads/meta/statuses'), api('/leads')
+  ]);
+
+  const serviceOpts = services.map((s) => `<option>${s}</option>`).join('');
+  document.getElementById('f_service').innerHTML = serviceOpts;
+  document.getElementById('filterService').innerHTML += serviceOpts;
+  
+  const statusOpts = statuses.map((s) => `<option>${s}</option>`).join('');
+  document.getElementById('f_status').innerHTML = statusOpts;
+  document.getElementById('filterStatus').innerHTML += statusOpts;
+
+  renderRows();
+  ['filterStatus', 'filterService'].forEach((id) => document.getElementById(id).addEventListener('change', renderRows));
+  document.getElementById('searchBox').addEventListener('input', renderRows);
+
+  document.getElementById('addBtn').addEventListener('click', () => openModal(null));
+  document.getElementById('closeModal').addEventListener('click', closeModal);
+  document.getElementById('cancelBtn').addEventListener('click', closeModal);
+
+  document.getElementById('leadForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = document.getElementById('leadId').value;
+    const payload = {
+      name: document.getElementById('f_name').value.trim(),
+      phone: document.getElementById('f_phone').value.trim(),
+      email: document.getElementById('f_email').value.trim(),
+      serviceRequested: document.getElementById('f_service').value,
+      status: document.getElementById('f_status').value,
+      followUpDate: document.getElementById('f_followup').value,
+      assignedTo: document.getElementById('f_assigned').value.trim(),
+      notes: document.getElementById('f_notes').value.trim(),
+    };
+    try {
+      if (id) await api('/leads/' + id, { method: 'PUT', body: payload });
+      else await api('/leads', { method: 'POST', body: payload });
+      allLeads = await api('/leads');
+      renderRows();
+      closeModal();
+    } catch (err) {
+      document.getElementById('formError').textContent = err.message;
+    }
+  });
+
+  document.getElementById('deleteBtn').addEventListener('click', async () => {
+    if (!isAdmin) return; 
+    const id = document.getElementById('leadId').value;
+    if (!confirm('Delete this lead?')) return;
+    await api('/leads/' + id, { method: 'DELETE' });
+    allLeads = await api('/leads');
+    renderRows();
+    closeModal();
+  });
+})();
+</script>
+</body>
+</html>

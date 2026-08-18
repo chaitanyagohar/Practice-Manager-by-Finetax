@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Quotations - Practice Manager</title>
+<link rel="stylesheet" href="/css/style.css">
+<style>
+  .item-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; }
+  .item-row input { margin: 0; }
+  .totals-box { border-top: 1px solid var(--border); padding-top: 15px; margin-top: 15px; text-align: right; }
+  .wa-btn { background: #25D366; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; font-weight: 600;}
+  .email-btn { background: #0078D4; color: white; border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; font-weight: 600;}
+</style>
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar" id="sidebar"></div>
+  <div class="main">
+    <div class="topbar"><h1 id="pageTitle">Quotations</h1></div>
+    <div class="content">
+      <div class="toolbar">
+        <input type="text" id="searchBox" placeholder="Search client name..." style="max-width:250px;">
+        <div class="spacer"></div>
+        <button class="btn" id="addBtn">+ Create Quotation</button> 
+      </div>
+      <div class="card" style="padding:0;">
+        <table>
+          <thead><tr><th>Date</th><th>Client Name</th><th>Total Amount</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div class="empty-state" id="emptyState" style="display:none;">No quotations found.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal" style="max-width: 700px;">
+    <span class="close-x" id="closeModal">&times;</span>
+    <h2 id="modalTitle">Create Quotation</h2>
+    <form id="quoteForm">
+      <input type="hidden" id="quoteId">
+      <div class="form-grid">
+        <div class="form-row"><label>Client Name *</label><input id="f_clientName" required></div>
+        <div class="form-row"><label>Date *</label><input type="date" id="f_date" required></div>
+        <div class="form-row"><label>Phone (For WhatsApp)</label><input id="f_phone" placeholder="e.g. 919999999999"></div>
+        <div class="form-row"><label>Email</label><input type="email" id="f_email"></div>
+        <div class="form-row"><label>Valid Until</label><input type="date" id="f_validUntil"></div>
+        <div class="form-row"><label>Status</label>
+          <select id="f_status"><option>Draft</option><option>Sent</option><option>Accepted</option><option>Rejected</option></select>
+        </div>
+      </div>
+
+      <h3 style="margin-top: 20px; font-size: 14px;">Services / Items</h3>
+      <div id="itemsContainer"></div>
+      <button type="button" class="btn secondary" id="addItemBtn" style="margin-top: 10px; font-size: 12px;">+ Add Line Item</button>
+
+      <div class="totals-box">
+        <div style="margin-bottom: 5px;">Subtotal: ₹<span id="txt_subtotal">0.00</span></div>
+        <div style="margin-bottom: 5px; display:flex; justify-content: flex-end; align-items: center; gap: 10px;">
+          Tax / GST (%): <input type="number" id="f_taxRate" value="18" style="width: 70px; padding: 4px;" min="0" max="100">
+        </div>
+        <h3 style="margin-top: 10px; color: var(--navy);">Total: ₹<span id="txt_total">0.00</span></h3>
+      </div>
+
+      <div class="toolbar" style="margin-top: 20px;">
+        <button type="button" class="btn danger" id="deleteBtn" style="display:none;">Delete</button>
+        <div class="spacer"></div>
+        <button type="button" class="btn secondary" id="cancelBtn">Cancel</button>
+        <button type="submit" class="btn">Save Quotation</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="/js/common.js"></script>
+<script>
+let allQuotes = [];
+let isAdmin = false; 
+
+// Dynamic Item Math
+function calculateTotals() {
+  let subtotal = 0;
+  document.querySelectorAll('.item-row').forEach(row => {
+    const qty = parseFloat(row.querySelector('.qty-input').value) || 0;
+    const price = parseFloat(row.querySelector('.price-input').value) || 0;
+    subtotal += (qty * price);
+  });
+  const taxRate = parseFloat(document.getElementById('f_taxRate').value) || 0;
+  const taxAmount = subtotal * (taxRate / 100);
+  const total = subtotal + taxAmount;
+
+  document.getElementById('txt_subtotal').textContent = subtotal.toFixed(2);
+  document.getElementById('txt_total').textContent = total.toFixed(2);
+}
+
+function createItemRow(desc = '', qty = 1, price = 0) {
+  const div = document.createElement('div');
+  div.className = 'item-row';
+  div.innerHTML = `
+    <input type="text" class="desc-input" placeholder="Service description" style="flex: 2;" value="${escapeHtml(desc)}" required>
+    <input type="number" class="qty-input" placeholder="Qty" style="flex: 0.5;" value="${qty}" min="1" required>
+    <input type="number" class="price-input" placeholder="Price" style="flex: 1;" value="${price}" min="0" required>
+    <button type="button" class="btn danger remove-item" style="padding: 6px 10px;">X</button>
+  `;
+  div.querySelector('.remove-item').addEventListener('click', () => { div.remove(); calculateTotals(); });
+  div.querySelectorAll('input').forEach(inp => inp.addEventListener('input', calculateTotals));
+  document.getElementById('itemsContainer').appendChild(div);
+  calculateTotals();
+}
+
+document.getElementById('addItemBtn').addEventListener('click', () => createItemRow());
+document.getElementById('f_taxRate').addEventListener('input', calculateTotals);
+
+// Generate WhatsApp & Email Text
+function generateMessageText(q) {
+  let itemsText = q.items.map(i => `- ${i.desc}: ₹${i.price}`).join('%0A');
+  return `Hello ${encodeURIComponent(q.clientName)},%0A%0AHere is the quotation for requested services from our CA firm:%0A%0A${itemsText}%0A%0A*Total Amount:* ₹${q.total}%0A%0APlease let us know if you would like to proceed.%0A%0AThank you!`;
+}
+
+function renderRows() {
+  const search = document.getElementById('searchBox').value.trim().toLowerCase();
+  let list = search ? allQuotes.filter(q => q.clientName.toLowerCase().includes(search)) : allQuotes;
+
+  const rows = document.getElementById('rows');
+  document.getElementById('emptyState').style.display = list.length ? 'none' : 'block';
+  
+  rows.innerHTML = list.map((q) => {
+    const waLink = `https://wa.me/${q.phone}?text=${generateMessageText(q)}`;
+    const emailLink = `mailto:${q.email}?subject=Quotation from CA Firm&body=${generateMessageText(q).replace(/%0A/g, '%0D%0A')}`;
+    
+    return `
+      <tr>
+        <td>${formatDate(q.date)}</td>
+        <td style="font-weight:600; cursor:pointer;" onclick="openModal('${q.id}')" class="text-link">${escapeHtml(q.clientName)}</td>
+        <td>₹${Number(q.total).toFixed(2)}</td>
+        <td>${badge(q.status)}</td>
+        <td>
+          ${q.phone ? `<a href="${waLink}" target="_blank" class="wa-btn">WhatsApp</a>` : ''}
+          ${q.email ? `<a href="${emailLink}" target="_blank" class="email-btn" style="margin-left:5px;">Email</a>` : ''}
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function openModal(id) {
+  document.getElementById('itemsContainer').innerHTML = '';
+  const deleteBtn = document.getElementById('deleteBtn');
+  
+  if (id) {
+    const q = allQuotes.find(x => x.id === id);
+    document.getElementById('modalTitle').textContent = 'Edit Quotation';
+    document.getElementById('quoteId').value = q.id;
+    document.getElementById('f_clientName').value = q.clientName;
+    document.getElementById('f_date').value = q.date;
+    document.getElementById('f_phone').value = q.phone || '';
+    document.getElementById('f_email').value = q.email || '';
+    document.getElementById('f_validUntil').value = q.validUntil || '';
+    document.getElementById('f_status').value = q.status;
+    
+    // Reverse calculate tax rate for display
+    const taxRate = q.subtotal > 0 ? ((q.tax / q.subtotal) * 100).toFixed(0) : 18;
+    document.getElementById('f_taxRate').value = taxRate;
+    
+    if (q.items && q.items.length) {
+      q.items.forEach(i => createItemRow(i.desc, i.qty, i.price));
+    } else {
+      createItemRow();
+    }
+    deleteBtn.style.display = isAdmin ? 'inline-flex' : 'none';
+  } else {
+    document.getElementById('modalTitle').textContent = 'Create Quotation';
+    document.getElementById('quoteForm').reset();
+    document.getElementById('quoteId').value = '';
+    document.getElementById('f_date').value = new Date().toISOString().slice(0, 10);
+    document.getElementById('f_taxRate').value = '18';
+    createItemRow();
+    deleteBtn.style.display = 'none';
+  }
+  calculateTotals();
+  document.getElementById('modalOverlay').classList.add('open');
+}
+
+function closeModal() { document.getElementById('modalOverlay').classList.remove('open'); }
+
+(async () => {
+  await renderShell('/quotations.html', 'Quotations');
+  try {
+    const user = await api('/me').catch(() => api('/auth/me'));
+    if (user && user.role === 'admin') isAdmin = true;
+  } catch (e) {}
+
+  allQuotes = await api('/quotations');
+  renderRows();
+  
+  document.getElementById('searchBox').addEventListener('input', renderRows);
+  document.getElementById('addBtn').addEventListener('click', () => openModal(null));
+  document.getElementById('closeModal').addEventListener('click', closeModal);
+  document.getElementById('cancelBtn').addEventListener('click', closeModal);
+
+  document.getElementById('quoteForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const items = [];
+    document.querySelectorAll('.item-row').forEach(row => {
+      items.push({
+        desc: row.querySelector('.desc-input').value,
+        qty: parseFloat(row.querySelector('.qty-input').value) || 0,
+        price: parseFloat(row.querySelector('.price-input').value) || 0
+      });
+    });
+
+    const subtotal = parseFloat(document.getElementById('txt_subtotal').textContent);
+    const total = parseFloat(document.getElementById('txt_total').textContent);
+    const tax = total - subtotal;
+
+    const payload = {
+      clientName: document.getElementById('f_clientName').value.trim(),
+      date: document.getElementById('f_date').value,
+      phone: document.getElementById('f_phone').value.replace(/\D/g, ''), // Strip non-numbers for WhatsApp
+      email: document.getElementById('f_email').value.trim(),
+      validUntil: document.getElementById('f_validUntil').value,
+      status: document.getElementById('f_status').value,
+      items, subtotal, tax, total
+    };
+
+    const id = document.getElementById('quoteId').value;
+    try {
+      if (id) await api('/quotations/' + id, { method: 'PUT', body: payload });
+      else await api('/quotations', { method: 'POST', body: payload });
+      
+      allQuotes = await api('/quotations');
+      renderRows();
+      closeModal();
+    } catch (err) { alert(err.message); }
+  });
+
+  document.getElementById('deleteBtn').addEventListener('click', async () => {
+    if (!isAdmin) return;
+    const id = document.getElementById('quoteId').value;
+    if (!confirm('Delete this quotation?')) return;
+    await api('/quotations/' + id, { method: 'DELETE' });
+    allQuotes = await api('/quotations');
+    renderRows();
+    closeModal();
+  });
+})();
+</script>
+</body>
+</html>

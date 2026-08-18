@@ -22,6 +22,8 @@ async function api(path, options = {}) {
 const NAV_ITEMS = [
   { href: '/dashboard.html', label: 'Dashboard' },
   { href: '/clients.html', label: 'Clients' },
+  { href: '/leads.html', label: 'Enquiries & Leads' }, // <-- NEW MODULE ADDED HERE
+  { href: '/quotations.html', label: 'Quotations' }, // <-- ADD THIS LINE
   { href: '/tasks.html', label: 'Tasks & Compliance' },
   { href: '/calendar.html', label: 'Compliance Calendar' },
   { href: '/discussions.html', label: 'Client Discussions' },

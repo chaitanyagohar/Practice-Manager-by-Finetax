@@ -1,6 +1,7 @@
 const express = require('express');
 const { v4: uuid } = require('uuid');
 const store = require('../db/store');
+const { requireRole } = require('../middleware/auth'); // NEW: Import role middleware
 
 const router = express.Router();
 
@@ -38,8 +39,15 @@ router.get('/', async (req, res) => {
   const rawTasks = await store.readAll('tasks');
   let tasks = rawTasks.map(withComputedStatus);
   
+  const canViewAll = req.session && req.session.role === 'admin';
+  if (!canViewAll) {
+    const me = req.session && req.session.name ? req.session.name.toLowerCase() : null;
+    tasks = tasks.filter((t) => t.assignedTo && t.assignedTo.toLowerCase() === me);
+  }
+
   if (clientId) tasks = tasks.filter((t) => t.clientId === clientId);
-  if (assignedTo) tasks = tasks.filter((t) => t.assignedTo === assignedTo);
+  if (assignedTo && canViewAll) tasks = tasks.filter((t) => t.assignedTo === assignedTo);
+  
   if (status) tasks = tasks.filter((t) => t.status === status);
   if (category) tasks = tasks.filter((t) => t.category === category);
   if (from) tasks = tasks.filter((t) => t.dueDate >= from);
@@ -61,7 +69,8 @@ router.get('/:id', async (req, res) => {
   res.json(withComputedStatus(task));
 });
 
-router.post('/', async (req, res) => {
+// NEW: Locked strictly to Admins
+router.post('/', requireRole('admin'), async (req, res) => {
   const { title, clientId, category, dueDate, assignedTo, priority, notes, recurrence } = req.body;
   if (!title || !dueDate) return res.status(400).json({ error: 'Title and due date are required' });
   const rec = RECURRENCE_OPTIONS.includes(recurrence) ? recurrence : 'None';
@@ -83,7 +92,12 @@ router.post('/', async (req, res) => {
 });
 
 router.put('/:id', async (req, res) => {
-  const allowed = ['title', 'clientId', 'category', 'dueDate', 'assignedTo', 'priority', 'status', 'notes', 'recurrence'];
+  // NEW: Admins can change everything. Staff can ONLY change status and notes.
+  const isAdmin = req.session && req.session.role === 'admin';
+  const allowed = isAdmin 
+    ? ['title', 'clientId', 'category', 'dueDate', 'assignedTo', 'priority', 'status', 'notes', 'recurrence']
+    : ['status', 'notes']; 
+    
   const patch = {};
   allowed.forEach((k) => { if (req.body[k] !== undefined) patch[k] = req.body[k]; });
   if (patch.recurrence && !RECURRENCE_OPTIONS.includes(patch.recurrence)) delete patch.recurrence;
@@ -125,7 +139,8 @@ router.put('/:id', async (req, res) => {
   res.json({ ...updated, nextOccurrence: nextTask });
 });
 
-router.delete('/:id', async (req, res) => {
+// NEW: Locked strictly to Admins
+router.delete('/:id', requireRole('admin'), async (req, res) => {
   const ok = await store.remove('tasks', req.params.id);
   res.json({ ok });
 });

@@ -25,7 +25,8 @@
           <option value="onetime">One-time only</option>
         </select>
         <div class="spacer"></div>
-        <button class="btn" id="addBtn">+ Add Task</button>
+        <!-- Add Task button will be hidden via JS if user is not an Admin -->
+        <button class="btn" id="addBtn">+ Add Task</button> 
       </div>
       <div class="card" style="padding:0;">
         <table>
@@ -78,6 +79,9 @@
 let allTasks = [], clients = [], categories = [], recurrenceOptions = [];
 const clientMap = {};
 
+// NEW: Track if the logged in user is an Admin
+let isAdmin = false; 
+
 function renderRows() {
   const status = document.getElementById('filterStatus').value;
   const category = document.getElementById('filterCategory').value;
@@ -85,6 +89,7 @@ function renderRows() {
   const recurring = document.getElementById('filterRecurring').value;
   const search = document.getElementById('searchBox').value.trim().toLowerCase();
   let list = allTasks;
+  
   if (status) list = list.filter((t) => t.status === status);
   if (category) list = list.filter((t) => t.category === category);
   if (clientId) list = list.filter((t) => t.clientId === clientId);
@@ -113,9 +118,19 @@ function openModal(id) {
   document.getElementById('formError').textContent = '';
   const deleteBtn = document.getElementById('deleteBtn');
   const seriesHint = document.getElementById('seriesHint');
+  
+  // NEW: Disable major fields if user is NOT an admin
+  const fieldsToLock = ['f_title', 'f_client', 'f_category', 'f_due', 'f_assigned', 'f_priority', 'f_recurrence'];
+  fieldsToLock.forEach(fieldId => {
+    const el = document.getElementById(fieldId);
+    el.disabled = !isAdmin;
+    // Optional: make it look slightly faded for staff
+    if (!isAdmin) el.style.opacity = '0.7'; 
+  });
+
   if (id) {
     const t = allTasks.find((x) => x.id === id);
-    document.getElementById('modalTitle').textContent = 'Edit Task';
+    document.getElementById('modalTitle').textContent = isAdmin ? 'Edit Task' : 'Update Status & Notes';
     document.getElementById('taskId').value = t.id;
     document.getElementById('f_title').value = t.title;
     document.getElementById('f_client').value = t.clientId || '';
@@ -126,7 +141,10 @@ function openModal(id) {
     document.getElementById('f_status').value = t.status === 'Overdue' ? 'Pending' : t.status;
     document.getElementById('f_notes').value = t.notes || '';
     document.getElementById('f_recurrence').value = t.recurrence || 'None';
-    deleteBtn.style.display = 'inline-flex';
+    
+    // Only show delete button for Admins
+    deleteBtn.style.display = (isAdmin) ? 'inline-flex' : 'none';
+    
     if (t.recurrence && t.recurrence !== 'None') {
       const seriesCount = allTasks.filter((x) => x.seriesId === (t.seriesId || t.id)).length;
       seriesHint.style.display = 'block';
@@ -135,6 +153,9 @@ function openModal(id) {
       seriesHint.style.display = 'none';
     }
   } else {
+    // Adding a new task (Admins only, button is hidden for staff but protected here just in case)
+    if (!isAdmin) return; 
+    
     document.getElementById('modalTitle').textContent = 'Add Task';
     document.getElementById('taskForm').reset();
     document.getElementById('taskId').value = '';
@@ -144,10 +165,27 @@ function openModal(id) {
   }
   document.getElementById('modalOverlay').classList.add('open');
 }
+
 function closeModal() { document.getElementById('modalOverlay').classList.remove('open'); }
 
 (async () => {
   await renderShell('/tasks.html', 'Tasks & Compliance');
+  
+  // NEW: Fetch user role to enforce UI security
+  try {
+    const user = await api('/me').catch(() => api('/auth/me')); // Fallback check
+    if (user && user.role === 'admin') {
+      isAdmin = true;
+    }
+  } catch (err) {
+    console.warn("Could not verify role. Defaulting to staff view.");
+  }
+
+  // Hide Add Task button for staff
+  if (!isAdmin) {
+    document.getElementById('addBtn').style.display = 'none';
+  }
+
   [clients, categories, allTasks, recurrenceOptions] = await Promise.all([
     api('/clients'), api('/tasks/meta/categories'), api('/tasks'), api('/tasks/meta/recurrence-options'),
   ]);
@@ -201,6 +239,7 @@ function closeModal() { document.getElementById('modalOverlay').classList.remove
   });
 
   document.getElementById('deleteBtn').addEventListener('click', async () => {
+    if (!isAdmin) return; // Extra UI guard
     const id = document.getElementById('taskId').value;
     if (!confirm('Delete this task?')) return;
     await api('/tasks/' + id, { method: 'DELETE' });

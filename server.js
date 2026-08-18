@@ -16,6 +16,8 @@ const discussionRoutes = require('./routes/discussions');
 const timeRoutes = require('./routes/time');
 const roleRoutes = require('./routes/roles');
 const emailRoutes = require('./routes/email');
+const leadRoutes = require('./routes/leads'); // <-- ADDED IMPORT
+const quotationRoutes = require('./routes/quotations');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -44,28 +46,24 @@ app.use('/api/discussions', requireAuth, discussionRoutes);
 app.use('/api/time', requireAuth, timeRoutes);
 app.use('/api/roles', requireAuth, roleRoutes);
 app.use('/api/email', requireAuth, emailRoutes);
+app.use('/api/leads', requireAuth, leadRoutes); // <-- ADDED ROUTE
+app.use('/api/quotations', requireAuth, quotationRoutes);
 
 // Static frontend
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/', (req, res) => res.redirect('/dashboard.html'));
-// CRITICAL FOR VERCEL: Export the Express app
-module.exports = app;
 
 // ONLY run the seed script and local server if you are NOT on Vercel
 if (process.env.NODE_ENV !== 'production') {
-// Run seed EVERY time so Vercel's /tmp database has the default admin user
-seed().then(() => {
-  console.log('Database seeded successfully.');
-}).catch(err => {
-  console.error('Failed to seed database:', err);
-});
+  // Run seed EVERY time so Vercel's /tmp database has the default admin user
+  seed().then(() => {
+    console.log('Database seeded successfully.');
+  }).catch(err => {
+    console.error('Failed to seed database:', err);
+  });
 
-// ONLY listen to the port locally, let Vercel handle routing
-if (process.env.NODE_ENV !== 'production') {
-  const os = require('os');
-  const PORT = process.env.PORT || 3000;
-  
+  // ONLY listen to the port locally, let Vercel handle routing
   app.listen(PORT, '0.0.0.0', () => {
     const nets = os.networkInterfaces();
     console.log('\nPractice Manager is running.');
@@ -77,9 +75,6 @@ if (process.env.NODE_ENV !== 'production') {
     });
     console.log('\nDefault login -> username: admin / password: admin123 (change this after first login)\n');
   });
-}
-
-// Close the outer non-production block
 }
 
 // CRITICAL FOR VERCEL: Export the app
